@@ -6,22 +6,42 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "SKIP_DB_TESTS=1 vitest run tests/unit tests/data",
+    "db:reset": "node scripts/db-reset.mjs",
+    "db:seed:generate": "node scripts/generate-seed.mjs",
+    "db:seed:media": "node scripts/generate-seed-media.mjs",
+    "db:admin-units:generate": "node scripts/generate-admin-units-sql.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.2",
     "next": "16.4.6",
+    "pg": "8.23.1",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
-    "typescript": "^5"
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.1.1"
   },
-  "packageManager": "pnpm@10.28.0"
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=20.9"
+  }
 }
