@@ -9,7 +9,7 @@ Tài liệu gốc: [PLAN.md](PLAN.md) (các mốc), [SPEC.md](SPEC.md) (đặc t
 | Mốc | Nội dung | Trạng thái |
 |---|---|---|
 | M0 | Kế hoạch, đặc tả, wireframe | Đã duyệt 22/11/2026 |
-| M1 | Nền móng: database, phân quyền, đăng nhập, hồ sơ, đăng món 6 loại, ảnh xóa EXIF | **Xong 22/11/2026, chờ duyệt** |
+| M1 | Nền móng: database, phân quyền, đăng nhập, hồ sơ, đăng món 6 loại, ảnh xóa EXIF | **Đã duyệt 22/11/2026** |
 | M2 | Quẹt, khớp, chat | Chưa làm |
 | M3 đến M6 | Đề nghị, giao dịch, đánh giá, admin, ra mắt | Chưa làm |
 
