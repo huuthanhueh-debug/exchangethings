@@ -121,3 +121,31 @@ describe('lưu tệp local', async () => {
     expect(() => assertSafePath(p)).toThrow();
   });
 });
+
+describe('cấu hình kết nối database', async () => {
+  const { poolConfig } = await import('@/server/db');
+  const { SUPABASE_ROOT_CA_2021 } = await import('@/server/supabase-ca');
+  const sslOf = (c: ReturnType<typeof poolConfig>) => c.ssl as { ca?: string; rejectUnauthorized?: boolean } | undefined;
+
+  it('Postgres local: không dùng TLS', () => {
+    expect(poolConfig({ DATABASE_URL: 'postgres://postgres:postgres@127.0.0.1:5432/exchangethings_dev' }).ssl).toBeUndefined();
+  });
+  it('Supabase: luôn TLS, kiểm tra chứng chỉ bằng CA gốc của Supabase', () => {
+    const c = poolConfig({ DATABASE_URL: 'postgres://postgres.abc:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres' });
+    expect(sslOf(c)).toEqual({ ca: SUPABASE_ROOT_CA_2021, rejectUnauthorized: true });
+    expect(SUPABASE_ROOT_CA_2021.startsWith('-----BEGIN CERTIFICATE-----')).toBe(true);
+  });
+  it('bỏ sslmode trong chuỗi kết nối để không ghi đè việc kiểm tra chứng chỉ', () => {
+    const c = poolConfig({ DATABASE_URL: 'postgres://u:p@db.abc.supabase.co:5432/postgres?sslmode=no-verify&application_name=et' });
+    expect(c.connectionString).not.toContain('sslmode');
+    expect(c.connectionString).toContain('application_name=et');
+    expect(sslOf(c)?.rejectUnauthorized).toBe(true);
+  });
+  it('CA tự đặt được ưu tiên; chấp nhận PEM dán kiểu \\n trên một dòng', () => {
+    const c = poolConfig({ DATABASE_URL: 'postgres://u:p@db.abc.supabase.co:5432/postgres', DATABASE_CA_CERT: '-----BEGIN CERTIFICATE-----\\nABC\\n-----END CERTIFICATE-----' });
+    expect(sslOf(c)?.ca).toBe('-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----');
+  });
+  it('database ở xa không phải Supabase: vẫn TLS và kiểm tra bằng CA hệ thống', () => {
+    expect(poolConfig({ DATABASE_URL: 'postgres://u:p@db.example.com:5432/app' }).ssl).toEqual({ rejectUnauthorized: true });
+  });
+});

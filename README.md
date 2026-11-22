@@ -72,6 +72,7 @@ tests/                 test database (db/), unit (unit/), file sinh tự động
 - **Mọi lớp tự kiểm tra lại**: proxy chặn sớm, mỗi trang và Server Action tự xác thực, RLS là lớp cuối.
 - **Ảnh chỉ server ghi**, sau khi xóa metadata (D-20); kiểm định dạng thật từ nội dung tệp.
 - Bộ lọc từ khóa so khớp nguyên từ (D-21); các cách lách kiểm duyệt đã bị chặn và có test (D-22).
+- Kết nối database ở xa luôn mã hóa TLS và kiểm tra chứng chỉ (kèm sẵn CA gốc của Supabase).
 - Không có khóa bí mật trong code; header bảo mật cơ bản trên mọi trang.
 
 ## Đưa lên online (việc của chủ dự án, trước M2)

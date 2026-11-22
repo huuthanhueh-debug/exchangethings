@@ -1,6 +1,7 @@
 import 'server-only';
 import pg from 'pg';
 import { env, isLoopbackDatabase } from './env';
+import { SUPABASE_ROOT_CA_2021 } from './supabase-ca';
 
 // Lớp truy cập dữ liệu (DECISIONS D-13, D-23). Mọi truy vấn của người dùng chạy trong một transaction đã đặt
 // vai trò (anon hoặc authenticated) và JWT claims, giống cách Supabase/PostgREST làm, nên RLS áp dụng y hệt.
@@ -12,19 +13,27 @@ export type Tx = pg.PoolClient;
 
 type GlobalWithPool = typeof globalThis & { __exchangethingsPool?: pg.Pool };
 
+/**
+ * Cấu hình kết nối. Database ở xa thì luôn mã hóa TLS và luôn kiểm tra chứng chỉ:
+ * dùng DATABASE_CA_CERT nếu có, database Supabase thì dùng CA gốc của Supabase đóng gói sẵn,
+ * còn lại dùng CA hệ thống. Bỏ các tham số ssl* trong chuỗi kết nối vì pg cho chúng ghi đè cấu hình này.
+ */
+export function poolConfig(e: { DATABASE_URL: string; DATABASE_CA_CERT?: string }): pg.PoolConfig {
+  const url = new URL(e.DATABASE_URL);
+  for (const key of ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) url.searchParams.delete(key);
+  let ssl: pg.PoolConfig['ssl'];
+  if (!isLoopbackDatabase(e.DATABASE_URL)) {
+    const custom = e.DATABASE_CA_CERT?.trim().replace(/\\n/g, '\n');
+    const isSupabase = /\.supabase\.(com|co)$/i.test(url.hostname);
+    const ca = custom || (isSupabase ? SUPABASE_ROOT_CA_2021 : undefined);
+    ssl = ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: true };
+  }
+  return { connectionString: url.toString(), ssl, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000 };
+}
+
 function pool(): pg.Pool {
   const g = globalThis as GlobalWithPool;
-  if (!g.__exchangethingsPool) {
-    const e = env();
-    const remote = !isLoopbackDatabase(e.DATABASE_URL);
-    g.__exchangethingsPool = new pg.Pool({
-      connectionString: e.DATABASE_URL,
-      max: 5,
-      idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 5_000,
-      ssl: remote && e.DATABASE_CA_CERT ? { ca: e.DATABASE_CA_CERT, rejectUnauthorized: true } : undefined,
-    });
-  }
+  if (!g.__exchangethingsPool) g.__exchangethingsPool = new pg.Pool(poolConfig(env()));
   return g.__exchangethingsPool;
 }
 
