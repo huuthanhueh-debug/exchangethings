@@ -7,7 +7,13 @@ export const dbTestsEnabled = process.env.SKIP_DB_TESTS !== '1';
 export const uid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 export const iid = (n: number) => `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`;
 export const USERS = { an: uid(1), binh: uid(2), chi: uid(3), dung: uid(4), em: uid(5), phuc: uid(6), giang: uid(7), hoa: uid(8), khanh: uid(9), linh: uid(10), admin: uid(11) };
-export const ITEMS = { anIphone15: iid(1), binhIphone18: iid(2), chiGucci: iid(3), dungZegna: iid(4), emCourse: iid(5), hoaVoucher: iid(7), emUkuleleDraft: iid(24), giangBonsaiPending: iid(29) };
+export const ITEMS = {
+  anIphone15: iid(1), binhIphone18: iid(2), chiGucci: iid(3), dungZegna: iid(4), emCourse: iid(5), hoaVoucher: iid(7),
+  khanhLesson: iid(8), linhLogo: iid(9), anAirpods: iid(10), binhCamera: iid(11), binhExcel: iid(21),
+  emUkuleleDraft: iid(24), giangBonsaiPending: iid(29),
+};
+// Match mẫu của kịch bản 2 (Chi và Dũng), có sẵn 3 tin nhắn.
+export const SEED_MATCH = '00000000-0000-4000-b000-000000000001';
 
 export async function connect() {
   const url = process.env.TEST_DATABASE_URL;

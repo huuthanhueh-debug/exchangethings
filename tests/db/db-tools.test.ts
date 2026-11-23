@@ -150,7 +150,7 @@ d('cài database không cần token Supabase', () => {
     const extra = { version: '20991231000000', name: 'moi', file: '20991231000000_moi.sql', checksum: 'x', sql: 'select 1;' };
     r = await doctor(c, [...migrations, extra], { loopback: true });
     expect(failed(r)).toContain('migrations');
-    expect(formatReport(r)).toMatch(/✗ {2}Đã chạy đủ 5 migration: chưa chạy 20991231000000_moi\.sql\n\s+Cách sửa: /);
+    expect(formatReport(r)).toMatch(new RegExp(`✗ {2}Đã chạy đủ ${migrations.length + 1} migration: chưa chạy 20991231000000_moi\\.sql\\n\\s+Cách sửa: `));
   });
 
   it('lệnh khám báo khi tài khoản kết nối không chuyển được vai trò, và khi kết nối xa không có TLS', async () => {

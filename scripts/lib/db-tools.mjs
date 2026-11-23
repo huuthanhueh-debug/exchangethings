@@ -177,8 +177,10 @@ export async function migrate(client, migrations, { log = () => {}, dryRun = fal
 
 // --- Khám database: đúng những thứ app cần để chạy ----------------------------------------------------------------
 const ANON_FUNCTIONS = ['is_active_user', 'is_admin', 'is_banned'];
-const USER_FUNCTIONS = [...ANON_FUNCTIONS, 'admin_review_item', 'my_item_severity', 'my_profile', 'publish_item', 'withdraw_item'].sort();
-const NEED_POLICY = ['categories', 'item_media', 'item_private', 'item_reviews', 'item_wants', 'items', 'profile_private', 'profiles', 'provinces', 'wards'];
+const USER_FUNCTIONS = [...ANON_FUNCTIONS, 'admin_review_item', 'is_blocked_with', 'mark_match_read', 'my_item_severity', 'my_profile',
+  'publish_item', 'send_message', 'swipe_item', 'withdraw_item'].sort();
+const NEED_POLICY = ['blocks', 'categories', 'item_media', 'item_private', 'item_reviews', 'item_wants', 'items', 'match_reads', 'matches',
+  'messages', 'notifications', 'profile_private', 'profiles', 'provinces', 'swipes', 'wards'];
 
 /**
  * Trả danh sách { id, label, ok (true/false/null = bỏ qua), detail, fix }. Chỉ đọc, không đổi dữ liệu.
@@ -233,7 +235,11 @@ export async function doctor(client, migrations, { tls = null, loopback = false 
       has_table_privilege('authenticated', 'public.item_media', 'insert') as "người dùng tự ghi ảnh",
       has_column_privilege('authenticated', 'public.items', 'status', 'update') as "người dùng tự đổi trạng thái món",
       has_column_privilege('authenticated', 'public.profiles', 'trust_score', 'update') as "người dùng tự sửa điểm uy tín",
-      has_column_privilege('anon', 'public.profiles', 'ward_code', 'select') as "khách đọc phường/xã của người khác"`))[0];
+      has_column_privilege('anon', 'public.profiles', 'ward_code', 'select') as "khách đọc phường/xã của người khác",
+      has_table_privilege('authenticated', 'public.swipes', 'insert') as "người dùng tự ghi lượt quẹt",
+      has_table_privilege('authenticated', 'public.matches', 'insert') as "người dùng tự tạo match",
+      has_table_privilege('authenticated', 'public.messages', 'insert') as "người dùng tự ghi tin nhắn (bỏ qua bước che liên lạc)",
+      has_table_privilege('anon', 'public.messages', 'select') as "khách đọc tin nhắn"`))[0];
     const bad = Object.entries(r).filter(([, v]) => v).map(([k]) => k);
     return { ok: bad.length === 0, detail: bad.join('; ') };
   });
@@ -254,6 +260,11 @@ export async function doctor(client, migrations, { tls = null, loopback = false 
   await check('filter', 'Bộ lọc từ khóa bắt được chữ giấu ký tự vô hình, không bắt nhầm', 'Kiểm tra LC_CTYPE và chạy lại migration.', async () => {
     const r = (await q(`select public.banned_keyword_severity('va' || chr(8203) || 'pe')::text as hidden, public.banned_keyword_severity('Đàn ukulele gỗ')::text as clean`))[0];
     return { ok: r.hidden === 'block' && r.clean === null };
+  });
+  await check('chat', 'Chat che số điện thoại, số tài khoản; không che số tiền', 'Chạy lại migration M2 (quẹt, khớp, chat).', async () => {
+    const r = (await q(`select public.mask_contacts('gọi 0905 123 456') as phone, public.mask_contacts('ck 19035551234567') as account,
+      public.mask_contacts('giá 13.000.000 ₫') as money`))[0];
+    return { ok: r.phone === 'gọi [đã ẩn số điện thoại]' && r.account === 'ck [đã ẩn dãy số]' && r.money === 'giá 13.000.000 ₫' };
   });
   await check('signup', 'Tài khoản mới tự có hồ sơ (trigger trên auth.users)', 'Chạy lại migration schema.', async () => {
     const n = (await q(`select count(*)::int as n from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace s on s.oid = c.relnamespace
