@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { GoogleLogoIcon } from '@phosphor-icons/react/ssr';
 import { SubmitButton } from '@/components/form-bits';
 import { Badge, Card, Notice, Skeleton } from '@/components/ui';
-import { withAnon } from '@/server/db';
+import { elevate, withActor } from '@/server/db';
 import { env } from '@/server/env';
 import { getCatalog } from '@/server/catalog';
 import { getViewer, safeNextPath } from '@/server/session';
@@ -70,8 +70,9 @@ const TIER: Record<string, string> = { new: 'Thành viên mới', regular: 'Thà
 // Chỉ hiện ở máy dev (AUTH_MODE=dev): đăng nhập nhanh bằng người dùng trong dữ liệu mẫu.
 async function DevUsers({ next }: { next: string }) {
   const [users, catalog] = await Promise.all([
-    withAnon(async (tx) => (await tx.query<{ id: string; display_name: string; tier: string; role: string; province_code: string | null; completed_swaps: number }>(
-      `select id, display_name, tier, role, province_code, completed_swaps from profiles order by role desc, id limit 20`)).rows),
+    // Cột role là riêng tư nên đọc bằng quyền server; trang này chỉ tồn tại ở máy dev.
+    withActor({ kind: 'anon' }, (tx) => elevate(tx, { kind: 'anon' }, async () => (await tx.query<{ id: string; display_name: string; tier: string; role: string; province_code: string | null; completed_swaps: number }>(
+      `select id, display_name, tier, role, province_code, completed_swaps from profiles order by role desc, id limit 20`)).rows)),
     getCatalog(),
   ]);
   return (

@@ -3,7 +3,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { IMAGE_ERROR_MESSAGE, ImageError, processPhoto, type ProcessedImage } from '@/server/images';
-import { ItemActionError, addItemMedia, deleteItemMedia, publishItem, withdrawItem } from '@/server/item-service';
+import {
+  ItemActionError, MAX_PHOTOS_PER_ITEM, addItemMedia, assertCanAddMedia, deleteItemMedia, friendlyDbError, publishItem, withdrawItem,
+} from '@/server/item-service';
 import { getViewer } from '@/server/session';
 
 /** seq tăng sau mỗi lần tải thành công, để form làm mới ô chọn ảnh. */
@@ -53,15 +55,19 @@ export async function addPhotosAction(itemId: string, prev: PhotoState, formData
   const proofs = pick('proof');
   if (photos.length + proofs.length === 0) return { status: 'error', message: 'Chọn ít nhất một ảnh.', seq: prev.seq };
   if (proofs.length > 2) return { status: 'error', message: 'Tối đa 2 ảnh chứng từ mỗi lần.', seq: prev.seq };
+  if (photos.length > MAX_PHOTOS_PER_ITEM) return { status: 'error', message: `Tối đa ${MAX_PHOTOS_PER_ITEM} ảnh sản phẩm mỗi lần.`, seq: prev.seq };
   const toImages = async (files: File[]) => {
     const out: ProcessedImage[] = [];
     for (const f of files) out.push(await processPhoto(new Uint8Array(await f.arrayBuffer())));
     return out;
   };
   try {
+    // Kiểm tra món có phải của người gọi và còn nhận được ảnh không, trước khi tốn CPU giải mã ảnh.
+    await assertCanAddMedia(userId, itemId, photos.length, proofs.length);
     await addItemMedia(userId, itemId, await toImages(photos), await toImages(proofs));
   } catch (e) {
-    const message = e instanceof ImageError ? e.message : e instanceof ItemActionError ? e.message : IMAGE_ERROR_MESSAGE.corrupt;
+    const message = e instanceof ImageError || e instanceof ItemActionError ? e.message
+      : e instanceof Error && 'code' in e ? friendlyDbError(e) : IMAGE_ERROR_MESSAGE.corrupt;
     return { status: 'error', message, seq: prev.seq };
   }
   refresh(itemId);

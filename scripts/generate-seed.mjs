@@ -131,7 +131,7 @@ export function buildSeedSql() {
       wants.push(`  (${q(iid(n))}, ${q(t)}, ${t === 'category' ? q(v) : 'null'}, ${t === 'keyword' ? q(v) : 'null'})`);
     }
     const created = `2026-11-${String(1 + (n % 20)).padStart(2, '0')}T08:00:00Z`;
-    return `  (${q(iid(n))}, ${q(uid(u.n))}, ${q(type)}, ${q(cat)}, ${q(title)}, ${q(`Mô tả mẫu cho món: ${title}.`)}, ${q(x.condition ?? 'not_applicable')}, ${value}, ${x.pay ?? 0}, ${x.receive ?? 0}, ${x.sell ?? 'null'}, ${q(`{${delivery.join(',')}}`)}, ${q(u.province)}, ${x.expires ? q(x.expires) : 'null'}, ${Boolean(x.imei)}, ${digital}, ${x.duration ?? 'null'}, ${q(x.status ?? 'active')}, ${q(created)})`;
+    return `  (${q(iid(n))}, ${q(uid(u.n))}, ${q(type)}, ${q(cat)}, ${q(title)}, ${q(`Mô tả mẫu cho món: ${title}.`)}, ${q(x.condition ?? 'not_applicable')}, ${value}, ${x.pay ?? 0}, ${x.receive ?? 0}, ${x.sell ?? 'null'}, ${q(`{${delivery.join(',')}}`)}, ${q(u.province)}, ${x.expires ? q(x.expires) : 'null'}, ${Boolean(x.imei)}, ${digital}, ${x.duration ?? 'null'}, 'draft', ${q(created)})`;
   }).join(',\n') + ';');
   out.push('');
   out.push('insert into public.item_private (item_id, owner_id, imei_full) values');
@@ -142,6 +142,12 @@ export function buildSeedSql() {
   out.push('');
   out.push('insert into public.item_wants (item_id, want_type, category_id, keyword) values');
   out.push(wants.join(',\n') + ';');
+  // Món được tạo ở nháp (IMEI, ảnh chỉ ghi được khi món chưa đăng), giờ mới đặt trạng thái cuối.
+  out.push('');
+  for (const status of ['active', 'pending_review']) {
+    const ids = items.filter(([, , , , , , x]) => (x.status ?? 'active') === status).map(([n]) => q(iid(n)));
+    if (ids.length) out.push(`update public.items set status = ${q(status)} where id in (${ids.join(', ')});`);
+  }
   out.push('commit;');
   const summary = {
     users: users.length,

@@ -139,17 +139,29 @@ create trigger profile_private_updated_at before update on public.profile_privat
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
-  v_name text := coalesce(nullif(trim(new.raw_user_meta_data ->> 'display_name'), ''),
-                          nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
-                          'Thành viên');
+  -- Tên mặc định trung tính: không lấy phần đầu email hay tên Google, vì thường là tên thật và tên hiển thị là công khai.
+  v_default text := 'Thành viên ' || upper(substr(replace(new.id::text, '-', ''), 1, 4));
+  v_name text := coalesce(nullif(trim(new.raw_user_meta_data ->> 'display_name'), ''), v_default);
 begin
-  if length(v_name) < 2 then v_name := v_name || ' mới'; end if;
+  if length(v_name) < 2 or public.banned_keyword_severity(v_name) = 'block' then v_name := v_default; end if;
   insert into public.profiles (id, display_name) values (new.id, left(v_name, 40));
   insert into public.profile_private (id) values (new.id);
   return new;
 end $$;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Tên hiển thị và lời giới thiệu là nội dung công khai: không chứa từ cấm.
+create or replace function public.check_profile_text() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.texts_severity(new.display_name, new.bio) = 'block' then
+    raise exception 'profile contains a banned keyword' using errcode = '22023';
+  end if;
+  return new;
+end $$;
+create trigger profiles_text_filter before update of display_name, bio on public.profiles
+  for each row execute function public.check_profile_text();
 
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -237,7 +249,7 @@ create trigger items_category_check before insert or update of category_id, type
 create table public.item_private (
   item_id uuid primary key references public.items (id) on delete cascade,
   owner_id uuid not null references public.profiles (id) on delete cascade,
-  imei_full text check (imei_full ~ '^[0-9]{15}$'),
+  imei_full text not null check (imei_full ~ '^[0-9]{15}$'),
   created_at timestamptz not null default now()
 );
 
@@ -255,6 +267,52 @@ create table public.item_media (
 );
 create index item_media_item_idx on public.item_media (item_id, kind, sort);
 
+-- Giới hạn và khóa khi ghi ảnh. Khóa dòng món trước khi đếm để hai lượt tải lên cùng lúc không vượt giới hạn,
+-- và để publish_item (cũng khóa dòng món) không đếm ảnh trong lúc ảnh đang được thêm hoặc xóa.
+create or replace function public.guard_item_media_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_item public.items;
+  v_count integer;
+begin
+  select * into v_item from public.items where id = new.item_id for update;
+  if not found then
+    return new; -- khóa ngoại sẽ báo lỗi
+  end if;
+  if v_item.status in ('reserved', 'swapped') then
+    raise exception 'item is locked' using errcode = '22023';
+  end if;
+  select count(*) into v_count from public.item_media where item_id = new.item_id and kind = new.kind;
+  if new.kind = 'photo' and v_count >= 10 then
+    raise exception 'too many photos' using errcode = '22023';
+  elsif new.kind = 'proof' and v_count >= 4 then
+    raise exception 'too many proofs' using errcode = '22023';
+  end if;
+  -- Món loại "khác" được duyệt theo nội dung, kể cả ảnh: thêm ảnh thì duyệt lại.
+  if v_item.type = 'other' and v_item.status = 'active' then
+    update public.items set status = 'pending_review' where id = new.item_id;
+  end if;
+  return new;
+end $$;
+create trigger item_media_guard_insert before insert on public.item_media
+  for each row execute function public.guard_item_media_insert();
+
+-- Món đã đăng phải giữ đủ ảnh đã dùng để đăng: chỉ xóa ảnh khi món ở nháp hoặc đã gỡ.
+create or replace function public.guard_item_media_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_status public.item_status;
+begin
+  select status into v_status from public.items where id = old.item_id for update;
+  -- Không thấy món nghĩa là món đang bị xóa (cascade): cho xóa ảnh theo.
+  if found and v_status not in ('draft', 'removed') then
+    raise exception 'cannot delete media of a listed item' using errcode = '22023';
+  end if;
+  return old;
+end $$;
+create trigger item_media_guard_delete before delete on public.item_media
+  for each row execute function public.guard_item_media_delete();
+
 create table public.item_wants (
   id bigint generated always as identity primary key,
   item_id uuid not null references public.items (id) on delete cascade,
@@ -270,34 +328,111 @@ create table public.item_wants (
 );
 create index item_wants_item_idx on public.item_wants (item_id);
 
+-- Mỗi món tối đa 5 mong muốn. Từ khóa mong muốn cũng là nội dung công khai nên qua bộ lọc như tên và mô tả:
+-- món nháp được lọc khi đăng (publish_item), món đã đăng được lọc ngay khi thêm.
+create or replace function public.guard_item_wants() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_item public.items;
+  v_severity public.keyword_severity;
+begin
+  select * into v_item from public.items where id = new.item_id for update;
+  if not found then
+    return new; -- khóa ngoại sẽ báo lỗi
+  end if;
+  if (select count(*) from public.item_wants where item_id = new.item_id) >= 5 then
+    raise exception 'too many wants' using errcode = '22023';
+  end if;
+  if new.keyword is not null and v_item.status in ('active', 'pending_review') then
+    v_severity := public.banned_keyword_severity(new.keyword);
+    if v_severity = 'block' then
+      raise exception 'listing contains a banned keyword' using errcode = '22023';
+    elsif v_severity = 'flag' and v_item.status = 'active' then
+      update public.items set status = 'pending_review' where id = new.item_id;
+    end if;
+  end if;
+  return new;
+end $$;
+create trigger item_wants_guard before insert on public.item_wants
+  for each row execute function public.guard_item_wants();
+
 -- ---------------------------------------------------------------------------
 -- Kiểm duyệt nội dung: từ khóa cấm, đăng món, rút món, admin duyệt
 -- ---------------------------------------------------------------------------
-create or replace function public.regex_escape(p_text text) returns text
+-- Chuẩn hóa văn bản trước khi so từ khóa, để chữ đọc giống nhau thì khớp giống nhau (DECISIONS D-21, D-27):
+-- 1. NFKC: ghép dấu rời thành chữ tiếng Việt chuẩn, đổi chữ fullwidth về chữ thường gặp.
+-- 2. Bỏ ký tự vô hình (zero-width, soft hyphen, dấu điều khiển hướng chữ) và dấu kết hợp còn sót.
+-- 3. Đổi chữ Cyrillic, Hy Lạp trông giống chữ Latin về chữ Latin.
+-- 4. Mọi ký tự không phải chữ hay số thành một khoảng trắng; tách chữ và số dính nhau ("vape2" thành "vape 2").
+-- Cần LC_CTYPE hiểu Unicode (Supabase và Postgres local đều vậy); cuối file có phép kiểm tra.
+create or replace function public.normalize_for_filter(p_text text) returns text
 language sql immutable as $$
-  -- Thêm \ trước mọi ký tự không phải chữ, số, khoảng trắng: trong ARE, \ + ký tự không phải chữ là ký tự đó.
-  select regexp_replace(p_text, '([^[:alnum:][:space:]])', '\\\1', 'g');
+  select btrim(
+    regexp_replace(
+      regexp_replace(
+        regexp_replace(
+          translate(
+            regexp_replace(
+              regexp_replace(lower(normalize(coalesce(p_text, ''), NFKC)),
+                '[­͏؜ᅟᅠ឴឵᠋-᠎​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ]', '', 'g'),
+              '[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]', '', 'g'),
+            'авеікмнорстухјѕһԁԛԝαβεζηικμνορτυχ',
+            'abeikmhopctyxjshdqwabeznikmvoptux'),
+          '[^[:alnum:]]+', ' ', 'g'),
+        '([[:alpha:]])([[:digit:]])', '\1 \2', 'g'),
+      '([[:digit:]])([[:alpha:]])', '\1 \2', 'g'));
 $$;
 
--- So khớp theo nguyên từ (\m ... \M), giữ dấu tiếng Việt: "chó" không khớp "cho", "đạn" không khớp "đàn".
--- Bỏ dấu chỉ áp cho cụm nhiều chữ ("ma túy" khớp "ma tuy") hoặc từ khóa vốn không dấu ("vape").
+-- So khớp nguyên từ trên văn bản đã chuẩn hóa. Từ đơn có dấu chỉ khớp khi giữ dấu ("đạn" không khớp "dan",
+-- "chó" không khớp "cho"). Cụm nhiều chữ và từ khóa không dấu khớp cả khi người dùng gõ không dấu ("ma tuy").
+-- Bộ lọc là lớp chặn đầu tiên; cách viết lách nhìn thấy được (v4pe, s.ú.n.g) do báo cáo và admin xử lý.
 create or replace function public.banned_keyword_severity(p_text text) returns public.keyword_severity
 language sql stable security definer set search_path = public as $$
   with t as (
-    select lower(coalesce(p_text, '')) as txt,
-           lower(extensions.unaccent(coalesce(p_text, ''))) as txt_plain
+    select ' ' || n.txt || ' ' as txt, ' ' || extensions.unaccent(n.txt) || ' ' as txt_plain
+      from (select public.normalize_for_filter(p_text) as txt) n
+  ), k as (
+    select severity, public.normalize_for_filter(keyword) as kw from public.banned_keywords
   ), hits as (
     select k.severity
-      from public.banned_keywords k, t
-     where t.txt ~ ('\m' || public.regex_escape(lower(k.keyword)) || '\M')
-        or ((position(' ' in k.keyword) > 0 or lower(k.keyword) = lower(extensions.unaccent(k.keyword)))
-            and t.txt_plain ~ ('\m' || public.regex_escape(lower(extensions.unaccent(k.keyword))) || '\M'))
+      from k, t
+     where k.kw <> ''
+       and (position(' ' || k.kw || ' ' in t.txt) > 0
+         or ((position(' ' in k.kw) > 0 or k.kw = extensions.unaccent(k.kw))
+             and position(' ' || extensions.unaccent(k.kw) || ' ' in t.txt_plain) > 0))
   )
   select case
     when bool_or(severity = 'block') then 'block'::public.keyword_severity
     when bool_or(severity = 'flag') then 'flag'::public.keyword_severity
   end
   from hits;
+$$;
+
+-- Mức nặng nhất trong nhiều đoạn văn bản. Xét riêng từng đoạn để chữ cuối đoạn này không ghép với chữ đầu đoạn kia.
+create or replace function public.texts_severity(variadic p_texts text[]) returns public.keyword_severity
+language sql stable security definer set search_path = public as $$
+  select case
+    when bool_or(q.s = 'block') then 'block'::public.keyword_severity
+    when bool_or(q.s = 'flag') then 'flag'::public.keyword_severity
+  end
+  from (select public.banned_keyword_severity(x) as s from unnest(p_texts) as x) q;
+$$;
+
+-- Nội dung công khai của một món: tên, mô tả và các từ khóa "muốn đổi lấy".
+create or replace function public.item_severity(p_item_id uuid, p_title text, p_description text)
+returns public.keyword_severity
+language sql stable security definer set search_path = public as $$
+  select public.texts_severity(variadic array[p_title, p_description]
+    || coalesce((select array_agg(w.keyword) from public.item_wants w
+                  where w.item_id = p_item_id and w.keyword is not null), '{}'::text[]));
+$$;
+
+-- Cho trang quản lý món: kết quả lọc của chính món mình (hoặc admin xem món bất kỳ).
+create or replace function public.my_item_severity(p_item_id uuid) returns public.keyword_severity
+language sql stable security definer set search_path = public as $$
+  select public.item_severity(i.id, i.title, i.description)
+    from public.items i
+   where i.id = p_item_id and (i.owner_id = auth.uid() or public.is_admin());
 $$;
 
 -- Người dùng không tự đặt status; đăng món đi qua hàm này để kiểm tra đủ điều kiện.
@@ -340,7 +475,7 @@ begin
     raise exception 'phones need an IMEI and a sign-out confirmation' using errcode = '22023';
   end if;
 
-  v_severity := public.banned_keyword_severity(v_item.title || ' ' || coalesce(v_item.description, ''));
+  v_severity := public.item_severity(p_item_id, v_item.title, v_item.description);
   if v_severity = 'block' then
     raise exception 'listing contains a banned keyword' using errcode = '22023';
   end if;
@@ -363,6 +498,17 @@ begin
   end if;
 end $$;
 
+-- Nhật ký quyết định duyệt món (SPEC mục 12: mọi quyết định ghi lý do). Chỉ thêm; không sửa.
+create table public.item_reviews (
+  id bigint generated always as identity primary key,
+  item_id uuid not null references public.items (id) on delete cascade,
+  reviewer_id uuid references public.profiles (id) on delete set null,
+  approved boolean not null,
+  note text check (length(note) <= 500),
+  created_at timestamptz not null default now()
+);
+create index item_reviews_item_idx on public.item_reviews (item_id, created_at);
+
 create or replace function public.admin_review_item(p_item_id uuid, p_approve boolean, p_note text default null)
 returns public.item_status
 language plpgsql security definer set search_path = public as $$
@@ -377,41 +523,51 @@ begin
   if not found then
     raise exception 'item is not waiting for review' using errcode = 'P0002';
   end if;
-  -- Nội dung có thể đã đổi sau khi admin mở xem: kiểm lại trước khi cho lên.
-  if p_approve and public.banned_keyword_severity(v_item.title || ' ' || coalesce(v_item.description, '')) = 'block' then
+  -- Nội dung hoặc danh sách từ cấm có thể đã đổi sau khi admin mở xem: kiểm lại trước khi cho lên.
+  if p_approve and public.item_severity(p_item_id, v_item.title, v_item.description) = 'block' then
     raise exception 'listing contains a banned keyword' using errcode = '22023';
   end if;
+  -- review_note trên món chỉ chứa lý do từ chối để chủ món đọc (món đã gỡ không ai khác thấy).
+  -- Ghi chú khi duyệt là nội bộ, chỉ nằm trong nhật ký item_reviews.
   update public.items
-     set status = v_next, review_note = left(p_note, 500), requires_review = not p_approve
+     set status = v_next,
+         review_note = case when p_approve then null else left(p_note, 500) end,
+         requires_review = not p_approve
    where id = p_item_id;
+  insert into public.item_reviews (item_id, reviewer_id, approved, note)
+  values (p_item_id, auth.uid(), p_approve, left(p_note, 500));
   return v_next;
 end $$;
 
 -- Sửa món đã đăng.
--- Danh mục quyết định điều kiện đăng (chứng từ, IMEI), nên chỉ đổi được khi món ở nháp hoặc đã gỡ;
--- nếu không, người dùng có thể đăng ở danh mục dễ rồi chuyển sang danh mục cần chứng từ.
--- Nội dung món đang hiển thị hoặc đang chờ duyệt được lọc lại từ khóa: từ cấm thì chặn, từ cần duyệt
--- thì món đang hiển thị quay về chờ duyệt.
+-- Danh mục và cam kết thoát tài khoản quyết định điều kiện đăng (chứng từ, IMEI), nên chỉ đổi được khi món ở nháp
+-- hoặc đã gỡ; nếu không, người dùng có thể đăng ở danh mục dễ rồi chuyển sang danh mục cần chứng từ.
+-- Nội dung món đang hiển thị hoặc chờ duyệt được lọc lại: từ cấm thì chặn; từ cần duyệt thì quay về chờ duyệt.
+-- Món loại "khác" được duyệt theo nội dung, nên đổi tên hoặc mô tả là phải duyệt lại.
 create or replace function public.recheck_item_on_edit() returns trigger
-language plpgsql as $$
+language plpgsql security definer set search_path = public as $$
 declare
   v_severity public.keyword_severity;
+  v_listed boolean := old.status not in ('draft', 'removed');
 begin
-  if new.category_id is distinct from old.category_id and old.status not in ('draft', 'removed') then
+  if v_listed and new.category_id is distinct from old.category_id then
     raise exception 'withdraw the item before changing its category' using errcode = '22023';
+  end if;
+  if v_listed and new.signed_out_confirmed is distinct from old.signed_out_confirmed then
+    raise exception 'withdraw the item before changing its sign-out confirmation' using errcode = '22023';
   end if;
   if old.status in ('active', 'pending_review')
      and (new.title is distinct from old.title or new.description is distinct from old.description) then
-    v_severity := public.banned_keyword_severity(new.title || ' ' || coalesce(new.description, ''));
+    v_severity := public.item_severity(new.id, new.title, new.description);
     if v_severity = 'block' then
       raise exception 'listing contains a banned keyword' using errcode = '22023';
-    elsif v_severity = 'flag' and new.status = 'active' then
+    elsif new.status = 'active' and (v_severity = 'flag' or new.type = 'other') then
       new.status := 'pending_review';
     end if;
   end if;
   return new;
 end $$;
-create trigger items_recheck_on_edit before update of title, description, category_id on public.items
+create trigger items_recheck_on_edit before update of title, description, category_id, signed_out_confirmed on public.items
   for each row execute function public.recheck_item_on_edit();
 
 -- ---------------------------------------------------------------------------
@@ -501,6 +657,8 @@ begin
   raise exception '% is append-only', tg_table_name using errcode = '42501';
 end $$;
 create trigger transaction_events_append_only before update or delete on public.transaction_events
+  for each row execute function public.forbid_change();
+create trigger item_reviews_append_only before update on public.item_reviews
   for each row execute function public.forbid_change();
 
 create table public.escrow_payments (
@@ -615,3 +773,16 @@ create table public.notifications (
   created_at timestamptz not null default now()
 );
 create index notifications_user_idx on public.notifications (user_id, read_at);
+
+-- ---------------------------------------------------------------------------
+-- Kiểm tra giả định: bộ lọc từ khóa cần LC_CTYPE hiểu Unicode. Sai thì dừng migration, không chạy tiếp âm thầm.
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  if not ('ú' ~ '[[:alpha:]]' and lower('ĐẠN') = 'đạn') then
+    raise exception 'LC_CTYPE của database phải hiểu Unicode (ví dụ C.UTF-8 hoặc en_US.UTF-8)';
+  end if;
+  if public.normalize_for_filter('Ma' || chr(160) || 'TÚY!' || chr(8203) || ' vape2') <> 'ma túy vape 2' then
+    raise exception 'normalize_for_filter không hoạt động như mong đợi trên database này';
+  end if;
+end $$;

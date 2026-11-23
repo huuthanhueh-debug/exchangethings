@@ -15,8 +15,13 @@ function toB64url(bytes: Uint8Array): string {
 }
 
 function fromB64url(s: string): Uint8Array<ArrayBuffer> | null {
-  if (!/^[A-Za-z0-9_-]*$/.test(s)) return null;
-  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
+  if (!/^[A-Za-z0-9_-]*$/.test(s) || s.length % 4 === 1) return null; // độ dài dư 1 không phải base64 hợp lệ
+  let bin: string;
+  try {
+    bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
+  } catch {
+    return null;
+  }
   const out = new Uint8Array(new ArrayBuffer(bin.length));
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;

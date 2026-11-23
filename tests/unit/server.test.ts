@@ -51,6 +51,11 @@ describe('xử lý ảnh tải lên (SPEC mục 15: xóa EXIF)', () => {
     await expect(processPhoto(gif)).rejects.toMatchObject({ code: 'unsupported' });
     await expect(processPhoto(Buffer.from('<?php echo 1; ?>'))).rejects.toMatchObject({ code: 'corrupt' });
   });
+  it('từ chối ảnh trên 50 megapixel trước khi giải mã (tệp nhỏ nhưng ảnh khổng lồ)', async () => {
+    const huge = await sharp({ create: { width: 9000, height: 6000, channels: 3, background: '#888' } }).png({ compressionLevel: 9 }).toBuffer();
+    expect(huge.byteLength).toBeLessThan(MAX_UPLOAD_BYTES);
+    await expect(processPhoto(huge)).rejects.toMatchObject({ code: 'too_many_pixels' });
+  });
   it('từ chối ảnh quá nhỏ và tệp quá 10 MB', async () => {
     const tiny = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#888' } }).png().toBuffer();
     await expect(processPhoto(tiny)).rejects.toMatchObject({ code: 'too_small' });
@@ -94,7 +99,7 @@ describe('phiên đăng nhập thử (AUTH_MODE=dev)', async () => {
     expect(await verifyDevSession(`${payload}.${sig.slice(0, -2)}AA`, secret, now)).toBeNull();
     expect(await verifyDevSession(token, 'k'.repeat(32), now)).toBeNull();
     expect(await verifyDevSession(token, secret, now + (DEV_SESSION_MAX_AGE + 1) * 1000)).toBeNull();
-    for (const junk of [undefined, '', 'abc', 'a.b.c', '!!!.???', `${payload}.`]) {
+    for (const junk of [undefined, '', 'abc', 'a.b.c', '!!!.???', `${payload}.`, `${payload}.A`, `${payload}.AAAAA`, `A.${sig}`]) {
       expect(await verifyDevSession(junk, secret, now)).toBeNull();
     }
   });
@@ -136,14 +141,34 @@ describe('cấu hình kết nối database', async () => {
     expect(SUPABASE_ROOT_CA_2021.startsWith('-----BEGIN CERTIFICATE-----')).toBe(true);
   });
   it('bỏ sslmode trong chuỗi kết nối để không ghi đè việc kiểm tra chứng chỉ', () => {
-    const c = poolConfig({ DATABASE_URL: 'postgres://u:p@db.abc.supabase.co:5432/postgres?sslmode=no-verify&application_name=et' });
-    expect(c.connectionString).not.toContain('sslmode');
-    expect(c.connectionString).toContain('application_name=et');
+    const c = poolConfig({ DATABASE_URL: 'postgres://u:p%40ss@db.abc.supabase.co:6543/postgres?sslmode=no-verify&application_name=et&pgbouncer=true' });
+    expect(c).toMatchObject({ host: 'db.abc.supabase.co', port: 6543, user: 'u', password: 'p@ss', database: 'postgres', application_name: 'et' });
+    expect('connectionString' in c).toBe(false); // không đưa cả chuỗi cho pg, chỉ các thành phần đã kiểm tra
     expect(sslOf(c)?.rejectUnauthorized).toBe(true);
   });
   it('CA tự đặt được ưu tiên; chấp nhận PEM dán kiểu \\n trên một dòng', () => {
     const c = poolConfig({ DATABASE_URL: 'postgres://u:p@db.abc.supabase.co:5432/postgres', DATABASE_CA_CERT: '-----BEGIN CERTIFICATE-----\\nABC\\n-----END CERTIFICATE-----' });
     expect(sslOf(c)?.ca).toBe('-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----');
+  });
+  it('tham số ?host= không đánh lừa được: URL trông như localhost nhưng trỏ đi nơi khác bị từ chối', async () => {
+    const { isLoopbackDatabase } = await import('@/server/db-url');
+    const sneaky = 'postgres://postgres:pw@localhost:5432/app?host=db.prod.example.com';
+    expect(() => poolConfig({ DATABASE_URL: sneaky })).toThrow(/host/);
+    expect(isLoopbackDatabase(sneaky)).toBe(false);
+    expect(() => parseEnv({ DATABASE_URL: sneaky, AUTH_MODE: 'dev', DEV_AUTH_SECRET: 'x'.repeat(32), STORAGE_DRIVER: 'local' })).toThrow(/host/);
+    for (const param of ['hostaddr=10.0.0.1', 'port=6543', 'user=admin', 'options=-c%20role%3Dpostgres']) {
+      expect(() => poolConfig({ DATABASE_URL: `postgres://u:p@localhost/app?${param}` })).toThrow(/không được hỗ trợ/);
+    }
+  });
+  it('nhận diện localhost đúng, kể cả IPv6 và chữ hoa; tên gần giống thì không', async () => {
+    const { isLoopbackDatabase } = await import('@/server/db-url');
+    for (const ok of ['postgres://u:p@localhost/db', 'postgresql://u:p@127.0.0.1:5432/db', 'postgres://u:p@[::1]:5432/db', 'postgres://u:p@LOCALHOST/db']) {
+      expect(isLoopbackDatabase(ok)).toBe(true);
+    }
+    for (const no of ['postgres://u:p@localhost.evil.example/db', 'postgres://u:p@127.0.0.1.evil.example/db', 'postgres://u:p@%6cocalhost/db', 'mysql://u:p@localhost/db', 'not a url', undefined]) {
+      expect(isLoopbackDatabase(no)).toBe(false);
+    }
+    expect(poolConfig({ DATABASE_URL: 'postgres://u:p@[::1]:5433/db' })).toMatchObject({ host: '::1', port: 5433 });
   });
   it('database ở xa không phải Supabase: vẫn TLS và kiểm tra bằng CA hệ thống', () => {
     expect(poolConfig({ DATABASE_URL: 'postgres://u:p@db.example.com:5432/app' }).ssl).toEqual({ rejectUnauthorized: true });

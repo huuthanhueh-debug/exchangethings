@@ -1,10 +1,10 @@
 import 'server-only';
 import { z } from 'zod';
+import { isLoopbackDatabase, parseDatabaseUrl } from './db-url';
 
 // Cấu hình server, kiểm tra khi dùng lần đầu (không kiểm khi import, để `next build` chạy được không cần .env).
 // Không đặt key trong code: mọi bí mật đến từ biến môi trường (SPEC mục 15).
 
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 const schema = z
   .object({
@@ -23,6 +23,11 @@ const schema = z
   })
   .superRefine((e, ctx) => {
     const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+    try {
+      parseDatabaseUrl(e.DATABASE_URL);
+    } catch (err) {
+      issue('DATABASE_URL', err instanceof Error ? err.message : 'DATABASE_URL không hợp lệ.');
+    }
     const dbIsLocal = isLoopbackDatabase(e.DATABASE_URL);
     if (e.AUTH_MODE === 'dev') {
       // Chế độ đăng nhập thử chỉ dành cho máy dev: database phải ở localhost và không chạy trên Vercel.
@@ -43,13 +48,7 @@ const schema = z
 
 export type ServerEnv = z.infer<typeof schema>;
 
-export function isLoopbackDatabase(url: string): boolean {
-  try {
-    return LOOPBACK.has(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
+export { isLoopbackDatabase };
 
 /** Đọc và kiểm tra biến môi trường. Tách riêng để test được với bộ biến tùy ý. */
 export function parseEnv(source: Record<string, string | undefined>): ServerEnv {

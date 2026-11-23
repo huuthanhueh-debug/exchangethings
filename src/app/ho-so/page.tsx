@@ -39,7 +39,7 @@ async function ProfileContent() {
       phone_e164: string | null; phone_verified_at: Date | null;
     }>(`select p.display_name, p.bio, p.province_code, p.ward_code, p.trust_score, p.tier, p.completed_swaps, p.rating_avg, p.rating_count,
                pp.phone_e164, pp.phone_verified_at
-          from profiles p left join profile_private pp on pp.id = p.id where p.id = $1`, [viewer.id])).rows[0]),
+          from my_profile() p left join profile_private pp on pp.id = p.id`)).rows[0]),
     getCatalog(),
   ]);
   const wards = row.province_code ? await getWards(row.province_code) : [];

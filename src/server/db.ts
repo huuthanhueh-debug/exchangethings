@@ -1,6 +1,7 @@
 import 'server-only';
 import pg from 'pg';
-import { env, isLoopbackDatabase } from './env';
+import { parseDatabaseUrl } from './db-url';
+import { env } from './env';
 import { SUPABASE_ROOT_CA_2021 } from './supabase-ca';
 
 // Lớp truy cập dữ liệu (DECISIONS D-13, D-23). Mọi truy vấn của người dùng chạy trong một transaction đã đặt
@@ -14,21 +15,22 @@ export type Tx = pg.PoolClient;
 type GlobalWithPool = typeof globalThis & { __exchangethingsPool?: pg.Pool };
 
 /**
- * Cấu hình kết nối. Database ở xa thì luôn mã hóa TLS và luôn kiểm tra chứng chỉ:
- * dùng DATABASE_CA_CERT nếu có, database Supabase thì dùng CA gốc của Supabase đóng gói sẵn,
- * còn lại dùng CA hệ thống. Bỏ các tham số ssl* trong chuỗi kết nối vì pg cho chúng ghi đè cấu hình này.
+ * Cấu hình kết nối, dựng từ các thành phần đã phân tích của DATABASE_URL (xem db-url.ts).
+ * Database ở xa thì luôn mã hóa TLS và luôn kiểm tra chứng chỉ: dùng DATABASE_CA_CERT nếu có,
+ * database Supabase thì dùng CA gốc của Supabase đóng gói sẵn, còn lại dùng CA hệ thống.
  */
 export function poolConfig(e: { DATABASE_URL: string; DATABASE_CA_CERT?: string }): pg.PoolConfig {
-  const url = new URL(e.DATABASE_URL);
-  for (const key of ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) url.searchParams.delete(key);
+  const t = parseDatabaseUrl(e.DATABASE_URL);
   let ssl: pg.PoolConfig['ssl'];
-  if (!isLoopbackDatabase(e.DATABASE_URL)) {
+  if (!t.isLoopback) {
     const custom = e.DATABASE_CA_CERT?.trim().replace(/\\n/g, '\n');
-    const isSupabase = /\.supabase\.(com|co)$/i.test(url.hostname);
-    const ca = custom || (isSupabase ? SUPABASE_ROOT_CA_2021 : undefined);
+    const ca = custom || (t.isSupabase ? SUPABASE_ROOT_CA_2021 : undefined);
     ssl = ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: true };
   }
-  return { connectionString: url.toString(), ssl, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000 };
+  return {
+    host: t.host, port: t.port, user: t.user, password: t.password, database: t.database,
+    application_name: t.applicationName, ssl, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000,
+  };
 }
 
 function pool(): pg.Pool {

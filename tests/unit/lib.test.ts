@@ -3,6 +3,7 @@ import { formatDateVi, formatNumber, formatVnd, parseVnd } from '@/lib/format';
 import { formatVnMobile, maskVnMobile, normalizeVnMobile } from '@/lib/phone';
 import { isValidImei, normalizeImei } from '@/lib/imei';
 import { daysUntil, todayInVietnam } from '@/lib/items';
+import { safeNextPath } from '@/lib/safe-path';
 
 describe('tiền VND', () => {
   it('định dạng theo kiểu Việt Nam, khoảng trắng không ngắt dòng trước ₫', () => {
@@ -66,5 +67,28 @@ describe('ngày theo giờ Việt Nam', () => {
     expect(daysUntil('2026-12-01', '2026-11-22')).toBe(9);
     expect(daysUntil('2026-11-22', '2026-11-22')).toBe(0);
     expect(daysUntil('2026-11-21', '2026-11-22')).toBe(-1);
+  });
+});
+
+describe('đường dẫn quay lại sau đăng nhập (chống chuyển hướng ra trang ngoài)', () => {
+  it.each(['/ho-so', '/dang-mon?loai=physical', '/mon-cua-toi/abc?ket-qua=da-dang', '/'])('giữ đường dẫn nội bộ %s', (p) => {
+    expect(safeNextPath(p)).toBe(p);
+  });
+  it.each([
+    '//evil.example', '/\\evil.example', '/.//evil.example/x', '/..//evil.example', '/./\\evil.example', '/a/..//evil.example',
+    '/\t/evil.example', '/\n/evil.example', 'https://evil.example', 'evil.example', 'javascript:alert(1)', '', '/' + 'a'.repeat(2001),
+  ])('từ chối %j', (p) => {
+    expect(safeNextPath(p)).toBe('/');
+  });
+  it('kết quả không bao giờ bắt đầu bằng // hoặc chứa dấu \\', () => {
+    for (const p of ['/.//x', '/a/../..//x', '/%2F/x', '/%5Cx', '/././/x?y=//z']) {
+      const out = safeNextPath(p);
+      expect(out.startsWith('//')).toBe(false);
+      expect(out.includes('\\')).toBe(false);
+    }
+  });
+  it('giá trị không phải chuỗi thì về trang chủ', () => {
+    expect(safeNextPath(undefined)).toBe('/');
+    expect(safeNextPath(['/a', '/b'])).toBe('/');
   });
 });

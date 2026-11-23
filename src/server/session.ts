@@ -46,7 +46,7 @@ export const getViewer = cache(async (): Promise<Viewer | null> => {
   const row = await withActor({ kind: 'user', id }, async (tx) => {
     const r = await tx.query<{
       display_name: string; role: Viewer['role']; tier: Viewer['tier']; province_code: string | null; banned_at: Date | null; ward_code: string | null;
-    }>('select display_name, role, tier, province_code, ward_code, banned_at from profiles where id = $1', [id]);
+    }>('select display_name, role, tier, province_code, ward_code, banned_at from my_profile()');
     return r.rows[0];
   });
   if (!row) return null; // phiên còn nhưng hồ sơ không còn (ví dụ database dev vừa dựng lại)
@@ -72,13 +72,4 @@ export function actorOf(viewer: Viewer | null): Actor {
   return viewer ? { kind: 'user', id: viewer.id } : { kind: 'anon' };
 }
 
-/** Đường dẫn quay lại sau đăng nhập: chỉ nhận đường dẫn nội bộ, chống chuyển hướng ra ngoài. */
-export function safeNextPath(raw: unknown, fallback = '/'): string {
-  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return fallback;
-  try {
-    const u = new URL(raw, 'http://x');
-    return u.origin === 'http://x' ? `${u.pathname}${u.search}` : fallback;
-  } catch {
-    return fallback;
-  }
-}
+export { safeNextPath } from '@/lib/safe-path';

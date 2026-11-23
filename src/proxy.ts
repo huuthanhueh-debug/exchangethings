@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { DEV_SESSION_COOKIE, verifyDevSession } from '@/server/auth/dev-session';
+import { isLoopbackDatabase } from '@/server/db-url';
 
 // Proxy (Next 16, trước đây là middleware), chạy trên Node.js trước mỗi request trang:
 // 1. Làm mới phiên Supabase và ghi cookie mới vào response (Server Component không ghi được cookie).
@@ -11,15 +12,9 @@ import { DEV_SESSION_COOKIE, verifyDevSession } from '@/server/auth/dev-session'
 // không bị proxy đệm hay cắt.
 
 const PROTECTED_PREFIXES = ['/ho-so', '/dang-mon', '/mon-cua-toi'];
-const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 function devAuthAllowed(): boolean {
-  if (process.env.AUTH_MODE !== 'dev' || process.env.VERCEL) return false;
-  try {
-    return LOOPBACK.has(new URL(process.env.DATABASE_URL ?? '').hostname);
-  } catch {
-    return false;
-  }
+  return process.env.AUTH_MODE === 'dev' && !process.env.VERCEL && isLoopbackDatabase(process.env.DATABASE_URL);
 }
 
 export async function proxy(request: NextRequest) {

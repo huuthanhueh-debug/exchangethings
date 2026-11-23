@@ -43,7 +43,7 @@ pnpm dev                       # mở http://localhost:3000, đăng nhập bằn
 
 | Lệnh | Việc |
 |---|---|
-| `pnpm test` | 135 test: phân quyền RLS, đăng món, bộ lọc từ khóa, seed chạy lại cho cùng kết quả, lớp service trên database thật, unit test. Tự dựng database `exchangethings_test` |
+| `pnpm test` | 205 test: phân quyền RLS, đăng món, bộ lọc từ khóa, chống lách sau rà soát độc lập, seed chạy lại cho cùng kết quả, lớp service trên database thật, unit test. Tự dựng database `exchangethings_test` |
 | `pnpm test:unit` | Chỉ unit test, không cần Postgres |
 | `pnpm typecheck` | Kiểm tra kiểu TypeScript |
 | `pnpm lint` | ESLint (gồm quy tắc accessibility và React Compiler) |
@@ -71,7 +71,9 @@ tests/                 test database (db/), unit (unit/), file sinh tự động
 - **Dữ liệu riêng tư tách bảng**: số điện thoại, IMEI đầy đủ chỉ chủ sở hữu và admin đọc được (D-18).
 - **Mọi lớp tự kiểm tra lại**: proxy chặn sớm, mỗi trang và Server Action tự xác thực, RLS là lớp cuối.
 - **Ảnh chỉ server ghi**, sau khi xóa metadata (D-20); kiểm định dạng thật từ nội dung tệp.
-- Bộ lọc từ khóa so khớp nguyên từ (D-21); các cách lách kiểm duyệt đã bị chặn và có test (D-22).
+- Bộ lọc từ khóa so khớp nguyên từ trên văn bản đã chuẩn hóa (D-21, D-27); các cách lách kiểm duyệt đã bị chặn và có test (D-22).
+- Đã qua một lượt rà soát độc lập trước khi lên mạng, vá cả 8 phát hiện (D-27). Hồ sơ chỉ lộ cột công khai (D-28).
+- Việc còn lại trước khi mở cho khách được liệt kê ở D-29: tài khoản database quyền tối thiểu, tắt Data API, giới hạn tần suất.
 - Kết nối database ở xa luôn mã hóa TLS và kiểm tra chứng chỉ (kèm sẵn CA gốc của Supabase).
 - Không có khóa bí mật trong code; header bảo mật cơ bản trên mọi trang.
 

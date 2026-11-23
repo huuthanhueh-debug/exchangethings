@@ -10,8 +10,9 @@ import sharp, { type Metadata } from 'sharp';
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // platform_settings.upload_limits.max_photo_mb
 const ACCEPTED_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif', 'heif']);
 const MIN_SIDE = 200;
+const MAX_PIXELS = 50_000_000; // 50 megapixel: đủ cho camera điện thoại hiện nay, chặn ảnh khổng lồ làm nghẽn server
 
-export type ImageErrorCode = 'too_large' | 'unsupported' | 'too_small' | 'corrupt';
+export type ImageErrorCode = 'too_large' | 'too_many_pixels' | 'unsupported' | 'too_small' | 'corrupt';
 
 export class ImageError extends Error {
   constructor(public readonly code: ImageErrorCode) {
@@ -22,6 +23,7 @@ export class ImageError extends Error {
 
 export const IMAGE_ERROR_MESSAGE: Record<ImageErrorCode, string> = {
   too_large: 'Ảnh lớn hơn 10 MB.',
+  too_many_pixels: 'Ảnh có độ phân giải quá lớn (tối đa 50 megapixel).',
   unsupported: 'Chỉ nhận ảnh JPEG, PNG, WebP hoặc AVIF.',
   too_small: 'Ảnh quá nhỏ, cần ít nhất 200 × 200 điểm ảnh.',
   corrupt: 'Không đọc được ảnh, tệp có thể bị hỏng.',
@@ -48,9 +50,11 @@ export async function processPhoto(input: Uint8Array, { maxSide = 1600 } = {}): 
   }
   if (!meta.format || !ACCEPTED_FORMATS.has(meta.format)) throw new ImageError('unsupported');
   if ((meta.width ?? 0) < MIN_SIDE || (meta.height ?? 0) < MIN_SIDE) throw new ImageError('too_small');
+  // Kích thước đọc từ phần đầu tệp, chưa giải mã: từ chối ảnh khổng lồ trước khi tốn bộ nhớ.
+  if ((meta.width ?? 0) * (meta.height ?? 0) > MAX_PIXELS) throw new ImageError('too_many_pixels');
 
   try {
-    const { data, info } = await sharp(input, { failOn: 'error', limitInputPixels: 50_000_000 })
+    const { data, info } = await sharp(input, { failOn: 'error', limitInputPixels: MAX_PIXELS })
       .rotate()
       .resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82 })

@@ -23,12 +23,13 @@ create or replace function public.is_banned(p_user uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles p where p.id = p_user and p.banned_at is not null);
 $$;
-revoke execute on function public.is_banned(uuid) from public;
 
-grant execute on function public.is_admin(), public.is_active_user(), public.is_banned(uuid),
-  public.banned_keyword_severity(text) to anon, authenticated;
-grant execute on function public.publish_item(uuid), public.withdraw_item(uuid),
-  public.admin_review_item(uuid, boolean, text) to authenticated;
+-- Hồ sơ đầy đủ của chính mình (các cột riêng tư không đọc được bằng SELECT thường, xem mục 4).
+create or replace function public.my_profile() returns setof public.profiles
+language sql stable security definer set search_path = public as $$
+  select * from public.profiles where id = auth.uid();
+$$;
+-- Quyền gọi hàm được chốt ở mục 11, cuối file, sau khi mọi hàm đã được tạo.
 
 -- 3. Dữ liệu tham chiếu: ai cũng đọc được, chỉ migration hoặc service role ghi.
 create policy provinces_read on public.provinces for select to anon, authenticated using (true);
@@ -38,6 +39,11 @@ create policy platform_settings_read on public.platform_settings for select to a
 create policy banned_keywords_admin_read on public.banned_keywords for select to authenticated using (public.is_admin());
 
 -- 4. Hồ sơ công khai: tên, ảnh, tỉnh/thành, uy tín. Người dùng chỉ sửa được vài cột của chính mình.
+-- Chỉ các cột công khai đọc được bằng SELECT. Phường/xã, vai trò, ngôn ngữ, số khiếu nại thua, ngày khóa là riêng tư:
+-- chủ tài khoản đọc qua my_profile(), hệ thống đọc qua các hàm SECURITY DEFINER (is_admin, is_banned).
+revoke select on public.profiles from anon, authenticated;
+grant select (id, display_name, avatar_path, province_code, bio, trust_score, tier, completed_swaps,
+  rating_avg, rating_count, created_at) on public.profiles to anon, authenticated;
 grant update (display_name, avatar_path, province_code, ward_code, bio, locale) on public.profiles to authenticated;
 create policy profiles_read on public.profiles for select to anon, authenticated
   using (banned_at is null or id = auth.uid() or public.is_admin());
@@ -93,11 +99,28 @@ create policy item_private_insert_own on public.item_private for insert to authe
 create policy item_private_update_own on public.item_private for update to authenticated
   using (owner_id = auth.uid()) with check (owner_id = auth.uid());
 
+-- IMEI là điều kiện đăng của điện thoại: chỉ khai hoặc đổi khi món ở nháp hoặc đã gỡ.
+create or replace function public.guard_item_private() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_status public.item_status;
+begin
+  if tg_op = 'UPDATE' and new.imei_full is not distinct from old.imei_full then
+    return new;
+  end if;
+  select status into v_status from public.items where id = new.item_id for update;
+  if found and v_status not in ('draft', 'removed') then
+    raise exception 'withdraw the item before changing its IMEI' using errcode = '22023';
+  end if;
+  return new;
+end $$;
+create trigger item_private_guard before insert or update of imei_full on public.item_private
+  for each row execute function public.guard_item_private();
+
 create or replace function public.sync_imei_last4() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  update public.items set imei_last4 = right(new.imei_full, 4)
-   where id = new.item_id and new.imei_full is not null;
+  update public.items set imei_last4 = right(new.imei_full, 4) where id = new.item_id;
   return new;
 end $$;
 create trigger item_private_sync_last4 after insert or update of imei_full on public.item_private
@@ -110,6 +133,11 @@ create policy item_media_read on public.item_media for select to anon, authentic
     or owner_id = auth.uid()
     or public.is_admin()
   );
+
+-- 8b. Nhật ký duyệt món: admin đọc tất cả; chủ món chỉ đọc lý do từ chối món của mình. Chỉ admin_review_item ghi.
+create policy item_reviews_admin_read on public.item_reviews for select to authenticated using (public.is_admin());
+create policy item_reviews_owner_read on public.item_reviews for select to authenticated
+  using (not approved and exists (select 1 from public.items i where i.id = item_id and i.owner_id = auth.uid()));
 
 -- 9. Mong muốn đổi lấy: hiện theo quyền xem món; chỉ chủ món thêm hoặc xóa.
 grant insert (item_id, want_type, wanted_item_id, category_id, keyword), delete on public.item_wants to authenticated;
@@ -135,3 +163,14 @@ begin
     $policy$;
   end if;
 end $$;
+
+-- 11. Chốt quyền gọi hàm. Đặt cuối file vì Supabase mặc định cho anon và authenticated gọi mọi hàm MỚI TẠO trong
+-- schema public: thu hồi sớm thì các hàm tạo sau đó vẫn hở. Thu hồi tất cả, rồi cấp lại đúng danh sách cần thiết.
+-- Bộ lọc từ khóa (banned_keyword_severity, texts_severity, item_severity) chỉ chạy bên trong hàm và trigger
+-- SECURITY DEFINER, không cấp cho người dùng, để không ai dò được danh sách từ cấm bằng cách gọi hàm.
+-- Migration sau này tạo hàm mới phải lặp lại bước thu hồi này; tests/db/hardening.test.ts canh danh sách.
+revoke execute on all functions in schema public from public, anon, authenticated;
+alter default privileges in schema public revoke execute on functions from anon, authenticated;
+grant execute on function public.is_admin(), public.is_active_user(), public.is_banned(uuid) to anon, authenticated;
+grant execute on function public.publish_item(uuid), public.withdraw_item(uuid),
+  public.admin_review_item(uuid, boolean, text), public.my_profile(), public.my_item_severity(uuid) to authenticated;

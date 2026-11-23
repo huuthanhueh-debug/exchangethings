@@ -37,6 +37,9 @@ async function EditContent({ params }: { params: PageProps<'/mon-cua-toi/[id]/su
         <ArrowLeftIcon size={16} aria-hidden /> Quay lại món
       </Link>
       <PageHeader title="Sửa món" description="Ảnh được thêm, xóa ở trang món. Món đang hiển thị thì không đổi được danh mục; gỡ món trước nếu cần." />
+      {editable && item.type === 'other' && item.status === 'active' && (
+        <div className="mb-5"><Notice tone="warn">Món loại Khác được duyệt theo nội dung: đổi tên hoặc mô tả thì món quay về chờ duyệt.</Notice></div>
+      )}
       {editable ? (
         <ItemForm mode="edit" type={item.type} {...formOptions(catalog, item.type)} defaults={valuesFromItem(item, imei)}
           action={updateItemAction.bind(null, item.id)} today={todayInVietnam()} />

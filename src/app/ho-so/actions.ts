@@ -31,7 +31,10 @@ export async function saveProfile(_prev: ProfileState, formData: FormData): Prom
       // Đổi số thì trigger tự bỏ xác minh cũ (DECISIONS D-18).
       await tx.query('update profile_private set phone_e164 = $2 where id = $1 and phone_e164 is distinct from $2', [viewer.id, r.value.phone_e164]);
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof Error && /banned keyword/.test(e.message)) {
+      return { status: 'error', errors: { display_name: ['Tên hoặc lời giới thiệu có từ ngữ không được phép. Sửa lại rồi lưu.'] }, values };
+    }
     return { status: 'error', errors: { form: ['Chưa lưu được hồ sơ. Thử lại sau ít phút.'] }, values };
   }
   revalidatePath('/', 'layout');

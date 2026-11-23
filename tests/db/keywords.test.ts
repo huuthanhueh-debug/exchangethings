@@ -36,6 +36,29 @@ d('bộ lọc từ khóa cấm và cần duyệt', () => {
     ['Bán chó Poodle', 'flag'],
     ['rep 1:1 like auth', 'flag'],
     ['Nhận thanh toán USDT', 'flag'],
+    // Lách bằng cách viết mà mắt người vẫn đọc như thường (rà soát độc lập, DECISIONS D-27)
+    ['ma  túy', 'block'],                         // hai khoảng trắng
+    ['ma\u00a0túy', 'block'],                     // khoảng trắng không ngắt dòng
+    ['ma\ttúy', 'block'],
+    ['ma\ntúy', 'block'],
+    ['va\u200bpe', 'block'],                      // ký tự zero-width giữa chữ
+    ['va\u00adpe', 'block'],                      // soft hyphen
+    ['su\u0301ng hơi', 'block'],                  // dấu rời (NFD)
+    ['v\u0336a\u0336p\u0336e\u0336', 'block'],    // gạch ngang chồng lên chữ
+    ['vаpe', 'block'],                            // chữ "а" Cyrillic
+    ['ｖａｐｅ', 'block'],                          // chữ fullwidth
+    ['vape2', 'block'],
+    ['crack2024 full', 'block'],
+    ['(vape)', 'block'],
+    ['vape🔥', 'block'],
+    ['hàng-fake', 'block'],
+    ['hàng_fake', 'block'],
+    ['SÚNG HƠI', 'block'],
+    ['MA TUY', 'block'],
+    // Chuẩn hóa không được gây bắt nhầm
+    ['Nhạc mp3 và 4G', null],
+    ['Vaper cũ', null],
+    ['Xe ma. Túy lúy thì thôi', 'block'],          // cùng một đoạn văn: dấu chấm không ngăn được cụm từ
   ];
   it.each(cases)('"%s" -> %s', async (text, expected) => {
     const r = await rows<{ s: string | null }>(c, 'select banned_keyword_severity($1)::text as s', [text]);
@@ -45,6 +68,12 @@ d('bộ lọc từ khóa cấm và cần duyệt', () => {
   it('chặn ưu tiên hơn cần duyệt khi có cả hai', async () => {
     const r = await rows<{ s: string }>(c, 'select banned_keyword_severity($1)::text as s', ['Bán chó kèm súng']);
     expect(r[0].s).toBe('block');
+  });
+
+  it('tên và mô tả được xét riêng: chữ cuối tên không ghép với chữ đầu mô tả', async () => {
+    const r = await rows<{ joined: string | null; apart: string | null }>(c,
+      `select banned_keyword_severity('Xe ma' || ' ' || 'túy lúy')::text as joined, texts_severity('Xe ma', 'túy lúy')::text as apart`);
+    expect(r[0]).toEqual({ joined: 'block', apart: null });
   });
 
   it('ký tự đặc biệt trong từ khóa không làm hỏng biểu thức chính quy', async () => {

@@ -21,6 +21,13 @@ const DB_MESSAGES: [RegExp, string][] = [
   [/account is banned/, 'Tài khoản của bạn đang bị khóa, chưa đăng món được.'],
   [/is already/, 'Món này đã được đăng rồi.'],
   [/withdraw the item before changing its category/, 'Gỡ món trước khi đổi danh mục.'],
+  [/changing its IMEI/, 'Gỡ món trước khi đổi IMEI.'],
+  [/sign-out confirmation/, 'Gỡ món trước khi đổi xác nhận thoát tài khoản.'],
+  [/too many photos/, 'Mỗi món tối đa 10 ảnh sản phẩm.'],
+  [/too many proofs/, 'Mỗi món tối đa 4 ảnh chứng từ.'],
+  [/too many wants/, 'Mỗi món tối đa 5 mong muốn.'],
+  [/cannot delete media of a listed item/, 'Chỉ xóa được ảnh của món nháp hoặc món đã gỡ.'],
+  [/item is locked/, 'Món đang trong giao dịch nên chưa sửa được.'],
   [/items_ready_rules/, 'Món còn thiếu thông tin bắt buộc của loại này.'],
   [/not found|not withdrawable/, 'Không tìm thấy món, hoặc món đang ở trạng thái không đổi được.'],
   [/row-level security|permission denied/, 'Bạn không có quyền thực hiện thao tác này.'],
@@ -56,9 +63,14 @@ async function removeFiles(paths: string[]) {
   await storage().remove('item-media', paths.flatMap((p) => [p, thumbPathOf(p)])).catch(() => {});
 }
 
-async function insertMedia(tx: Tx, actor: Actor & { kind: 'user' }, itemId: string, stored: { path: string; upload: Upload }[], sortStart: number) {
+async function insertMedia(tx: Tx, actor: Actor & { kind: 'user' }, itemId: string, stored: { path: string; upload: Upload }[]) {
+  // Khóa dòng món (dưới quyền người dùng, nên phải là món của họ) rồi mới đếm: hai lượt tải lên cùng lúc xếp hàng,
+  // thứ tự ảnh không trùng. Trigger ở database cũng khóa dòng này và chặn vượt giới hạn.
+  const locked = await tx.query('select 1 from items where id = $1 and owner_id = auth.uid() for update', [itemId]);
+  if (locked.rowCount !== 1) throw new ItemActionError('Không tìm thấy món của bạn.');
+  const counted = await tx.query<{ n: number }>(`select count(*)::int as n from item_media where item_id = $1 and kind = 'photo'`, [itemId]);
   await elevate(tx, actor, async () => {
-    let sort = sortStart;
+    let sort = counted.rows[0].n;
     for (const { path, upload } of stored) {
       await tx.query(
         `insert into item_media (item_id, owner_id, kind, storage_path, width, height, exif_stripped, sort)
@@ -112,7 +124,7 @@ export async function createDraftItem(userId: string, input: ItemInput, photos: 
         [userId, input.type, ...fieldValues(input)]);
       const itemId = r.rows[0].id;
       await writeWantsAndImei(tx, userId, itemId, input, false);
-      await insertMedia(tx, actor, itemId, stored, 0);
+      await insertMedia(tx, actor, itemId, stored);
       return itemId;
     });
   } catch (e) {
@@ -133,24 +145,36 @@ export async function updateItem(userId: string, itemId: string, input: ItemInpu
   });
 }
 
+export const MAX_PHOTOS_PER_ITEM = 10;
+export const MAX_PROOFS_PER_ITEM = 4;
+
+/**
+ * Kiểm tra sở hữu và số ảnh còn nhận được, dưới quyền người dùng. Gọi TRƯỚC khi giải mã ảnh: giải mã tốn CPU,
+ * không làm cho món không phải của người gọi hay khi đã hết chỗ.
+ */
+export async function assertCanAddMedia(userId: string, itemId: string, photos: number, proofs: number): Promise<void> {
+  const row = /^[0-9a-f-]{36}$/i.test(itemId)
+    ? await withActor({ kind: 'user', id: userId }, async (tx) => (await tx.query<{ photos: number; proofs: number }>(
+        `select (select count(*)::int from item_media m where m.item_id = i.id and m.kind = 'photo') as photos,
+                (select count(*)::int from item_media m where m.item_id = i.id and m.kind = 'proof') as proofs
+           from items i where i.id = $1 and i.owner_id = auth.uid() and i.status in ('draft', 'pending_review', 'active', 'removed')`,
+        [itemId])).rows[0])
+    : undefined;
+  if (!row) throw new ItemActionError('Không tìm thấy món của bạn.');
+  if (row.photos + photos > MAX_PHOTOS_PER_ITEM) throw new ItemActionError(`Mỗi món tối đa ${MAX_PHOTOS_PER_ITEM} ảnh sản phẩm.`);
+  if (row.proofs + proofs > MAX_PROOFS_PER_ITEM) throw new ItemActionError(`Mỗi món tối đa ${MAX_PROOFS_PER_ITEM} ảnh chứng từ.`);
+}
+
 /** Thêm ảnh vào món của chính mình. */
 export async function addItemMedia(userId: string, itemId: string, photos: ProcessedImage[], proofs: ProcessedImage[]): Promise<void> {
   const actor = { kind: 'user' as const, id: userId };
-  // Kiểm tra sở hữu dưới quyền người dùng trước khi tải gì lên.
-  const owned = await withActor(actor, async (tx) => {
-    const r = await tx.query<{ n: number }>(
-      `select (select count(*)::int from item_media m where m.item_id = i.id and m.kind = 'photo') as n
-         from items i where i.id = $1 and i.owner_id = auth.uid() and i.status in ('draft', 'pending_review', 'active', 'removed')`, [itemId]);
-    return r.rows[0];
-  });
-  if (!owned) throw new ItemActionError('Không tìm thấy món của bạn.');
-  if (owned.n + photos.length > 10) throw new ItemActionError('Mỗi món tối đa 10 ảnh sản phẩm.');
+  await assertCanAddMedia(userId, itemId, photos.length, proofs.length);
   const stored = await uploadAll(userId, [
     ...photos.map((image) => ({ image, kind: 'photo' as const })),
     ...proofs.map((image) => ({ image, kind: 'proof' as const })),
   ]);
   try {
-    await withActor(actor, (tx) => insertMedia(tx, actor, itemId, stored, owned.n));
+    await withActor(actor, (tx) => insertMedia(tx, actor, itemId, stored));
   } catch (e) {
     await removeFiles(stored.map((s) => s.path));
     throw e;

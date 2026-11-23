@@ -53,7 +53,7 @@ async function ManageContent({ params, searchParams }: Pick<PageProps<'/mon-cua-
   const [catalog, severity, imei] = await Promise.all([
     getCatalog(),
     withActor({ kind: 'user', id: viewer.id }, async (tx) =>
-      (await tx.query<{ s: string | null }>('select banned_keyword_severity($1)::text as s', [`${item.title} ${item.description ?? ''}`])).rows[0].s),
+      (await tx.query<{ s: string | null }>('select my_item_severity($1)::text as s', [id])).rows[0]?.s ?? null),
     getItemImei(viewer.id, id),
   ]);
   const meta = ITEM_TYPE_META[item.type];

@@ -131,6 +131,38 @@ d('lớp service: đăng, sửa, rút món dưới quyền người dùng', () =
     expect((await items.getItem({ kind: 'user', id: USERS.an }, id))?.media.filter((m) => m.kind === 'proof')).toHaveLength(1);
   });
 
+  it('nhiều lượt tải ảnh cùng lúc không vượt được 10 ảnh mỗi món', async () => {
+    const id = await svc.createDraftItem(USERS.an, speaker, [], []);
+    created.push(id);
+    const five = await Promise.all([1, 2, 3, 4, 5].map(photo));
+    const results = await Promise.allSettled([1, 2, 3, 4, 5, 6].map(() => svc.addItemMedia(USERS.an, id, five, [])));
+    const detail = await items.getItem({ kind: 'user', id: USERS.an }, id);
+    expect(detail?.photoCount).toBe(10);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    // Thứ tự ảnh không trùng nhau.
+    const sorts = await admin.query(`select sort from item_media where item_id = $1 and kind = 'photo' order by sort`, [id]);
+    expect(sorts.rows.map((r) => r.sort)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it('đăng món và xóa ảnh cùng lúc: không bao giờ ra món đang hiển thị mà thiếu ảnh', async () => {
+    const three = await Promise.all([1, 2, 3].map(photo));
+    for (let round = 0; round < 6; round++) {
+      const id = await svc.createDraftItem(USERS.an, speaker, three, []);
+      created.push(id);
+      const mediaId = (await items.getItem({ kind: 'user', id: USERS.an }, id))!.media[0].id;
+      await Promise.allSettled([svc.publishItem(USERS.an, id), svc.deleteItemMedia(USERS.an, mediaId)]);
+      const r = await admin.query(`select i.status, (select count(*)::int from item_media m where m.item_id = i.id and m.kind = 'photo') as n from items i where i.id = $1`, [id]);
+      const { status, n } = r.rows[0];
+      expect(status === 'active' ? n : 3).toBe(3); // đang hiển thị thì phải còn đủ 3 ảnh
+      expect([['active', 3], ['draft', 2]]).toContainEqual([status, n]);
+    }
+  });
+
+  it('thêm ảnh vào món của người khác bị từ chối trước khi tốn công xử lý', async () => {
+    await expect(svc.assertCanAddMedia(USERS.binh, created[0], 1, 0)).rejects.toThrow(/Không tìm thấy món của bạn/);
+    await expect(svc.assertCanAddMedia(USERS.an, 'khong-phai-uuid', 1, 0)).rejects.toThrow(/Không tìm thấy món của bạn/);
+  });
+
   it('danh sách món của tôi chỉ gồm món của mình, đủ mọi trạng thái', async () => {
     const mine = await items.listMyItems(USERS.em);
     expect(mine.map((i) => i.id)).toContain(ITEMS.emUkuleleDraft);
