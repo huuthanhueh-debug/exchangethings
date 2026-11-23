@@ -23,8 +23,12 @@ export type DeckFilters = {
 
 export const NO_FILTERS: DeckFilters = { onlyCompatible: false };
 
-type Params = Record<string, string | string[] | undefined>;
-const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+type Params = Record<string, unknown>;
+// Dữ liệu từ URL hoặc từ trình duyệt: chỉ nhận chuỗi, mọi kiểu khác coi như không có.
+const one = (v: unknown): string | undefined => {
+  const x: unknown = Array.isArray(v) ? v[0] : v;
+  return typeof x === 'string' ? x : undefined;
+};
 
 /** Đọc bộ lọc từ tham số URL hoặc dữ liệu gửi lên. Giá trị lạ bị bỏ qua, không báo lỗi. */
 export function parseDeckFilters(params: Params): DeckFilters {

@@ -3,7 +3,8 @@ import { withActor } from './db';
 import { getCatalog } from './catalog';
 import { valueBounds, type DeckFilters } from '@/lib/deck-filters';
 import type { Condition, DeliveryMethod, ItemType } from '@/lib/items';
-import { normalizeWeights, rankDeck, type Candidate, type MatchItem, type ScoreParts, type Want, type WantKind } from '@/lib/matching';
+import type { Tier } from '@/lib/tiers';
+import { isRemote, normalizeWeights, rankDeck, type Candidate, type MatchItem, type ScoreParts, type Want, type WantKind } from '@/lib/matching';
 
 // Chồng thẻ của màn quẹt (SPEC mục 5.3, 8). Mọi truy vấn chạy dưới quyền người xem:
 // RLS quyết định món nào thấy được; lượt đã quẹt và người đã chặn nhau bị loại ngay trong truy vấn.
@@ -12,7 +13,7 @@ import { normalizeWeights, rankDeck, type Candidate, type MatchItem, type ScoreP
 const POOL = 300;
 export const DECK_SIZE = 20;
 
-export type Tier = 'new' | 'regular' | 'high';
+export type { Tier };
 
 export type DeckCard = {
   id: string;
@@ -25,6 +26,16 @@ export type DeckCard = {
   expiresOn: string | null;
   coverMediaId: string | null;
   photoCount: number;
+  /** Ảnh sản phẩm theo thứ tự hiển thị (tối đa 10). */
+  photoIds: string[];
+  topupPayMaxVnd: number;
+  topupReceiveMaxVnd: number;
+  sellPriceVnd: number | null;
+  durationMinutes: number | null;
+  /** Điện thoại đã khai IMEI và xác nhận thoát iCloud/Google. */
+  imeiConfirmed: boolean;
+  /** Giao được từ xa: két số hoặc buổi online. */
+  remote: boolean;
   owner: { name: string; tier: Tier; trustScore: number; swaps: number; rating: number | null };
   wants: { categories: string[]; keywords: string[]; items: { id: string; title: string }[] };
   match: {
@@ -38,6 +49,11 @@ export type DeckCard = {
 
 export type Deck = { cards: DeckCard[]; myActiveItems: number };
 
+/** Thẻ xem thử cho khách: không có thông tin người đăng, không có điểm gợi ý (SPEC mục 3). */
+export type GuestCard = Pick<DeckCard, 'id' | 'type' | 'title' | 'estValueVnd' | 'categoryId' | 'provinceCode' | 'condition'
+  | 'expiresOn' | 'photoIds' | 'topupPayMaxVnd' | 'topupReceiveMaxVnd' | 'sellPriceVnd' | 'durationMinutes' | 'imeiConfirmed' | 'remote' | 'wants'>;
+export const GUEST_DECK_SIZE = 8;
+
 type WantRow = { t: 'item' | 'category' | 'keyword'; i: string | null; c: string | null; k: string | null; n: string | null };
 
 function toWants(rows: WantRow[]): Want[] {
@@ -50,6 +66,14 @@ function toWants(rows: WantRow[]): Want[] {
   return out;
 }
 
+function toWantLists(rows: WantRow[]): DeckCard['wants'] {
+  return {
+    categories: rows.filter((w) => w.t === 'category' && w.c).map((w) => w.c!),
+    keywords: rows.filter((w) => w.t === 'keyword' && w.k).map((w) => w.k!),
+    items: rows.filter((w) => w.t === 'item' && w.i && w.n).map((w) => ({ id: w.i!, title: w.n! })),
+  };
+}
+
 // Mong muốn kèm tên món cụ thể (chỉ khi người xem được phép thấy món đó).
 const WANTS_JSON = `coalesce((
   select jsonb_agg(jsonb_build_object('t', w.want_type, 'i', w.wanted_item_id, 'c', w.category_id, 'k', w.keyword,
@@ -59,18 +83,15 @@ const WANTS_JSON = `coalesce((
 type CandidateRow = {
   id: string; type: ItemType; title: string; category_id: string | null; est_value_vnd: string; topup_pay_max_vnd: string;
   topup_receive_max_vnd: string; delivery_methods: DeliveryMethod[]; province_code: string | null; condition: Condition;
-  expires_on: string | null; cover_media_id: string | null; photo_count: number; wants: WantRow[];
+  expires_on: string | null; photo_ids: string[]; sell_price_vnd: string | null; duration_minutes: number | null;
+  imei_confirmed: boolean; wants: WantRow[];
   owner_name: string; trust_score: number; tier: Tier; completed_swaps: number; rating_avg: string | null;
 };
 type MineRow = { id: string; title: string; category_id: string | null; est_value_vnd: string; topup_pay_max_vnd: string; topup_receive_max_vnd: string; wants: WantRow[] };
 
 export async function getDeck(viewer: { id: string; provinceCode: string | null }, filters: DeckFilters, limit = DECK_SIZE): Promise<Deck> {
   const catalog = await getCatalog();
-  // Danh mục đã chọn thì loại món suy ra từ danh mục; danh mục lạ thì coi như không lọc.
-  const category = filters.categoryId ? catalog.categoryById.get(filters.categoryId) : undefined;
-  const type = category ? category.item_type : filters.type;
-  const { min, max } = valueBounds(filters.valueRange);
-  const province = filters.provinceCode && catalog.provinceByCode.has(filters.provinceCode) ? filters.provinceCode : null;
+  const f = filterArgs(filters, catalog);
 
   const data = await withActor({ kind: 'user', id: viewer.id }, async (tx) => {
     const mine = await tx.query<MineRow>(
@@ -81,8 +102,8 @@ export async function getDeck(viewer: { id: string; provinceCode: string | null 
     const candidates = await tx.query<CandidateRow>(
       `select i.id, i.type, i.title, i.category_id, i.est_value_vnd, i.topup_pay_max_vnd, i.topup_receive_max_vnd,
               i.delivery_methods::text[] as delivery_methods, i.province_code, i.condition, i.expires_on::text as expires_on,
-              (select m.id from item_media m where m.item_id = i.id and m.kind = 'photo' order by m.sort, m.created_at limit 1) as cover_media_id,
-              (select count(*)::int from item_media m where m.item_id = i.id and m.kind = 'photo') as photo_count,
+              array(select m.id from item_media m where m.item_id = i.id and m.kind = 'photo' order by m.sort, m.created_at) as photo_ids,
+              i.sell_price_vnd, i.duration_minutes, (i.imei_last4 is not null and i.signed_out_confirmed) as imei_confirmed,
               ${WANTS_JSON} as wants,
               p.display_name as owner_name, p.trust_score, p.tier, p.completed_swaps, p.rating_avg
          from items i join profiles p on p.id = i.owner_id
@@ -97,7 +118,7 @@ export async function getDeck(viewer: { id: string; provinceCode: string | null 
           and ($5::text is null or i.province_code = $5)
         order by i.created_at desc, i.id
         limit $6`,
-      [type ?? null, category ? filters.categoryId : null, min, max, province, POOL]);
+      [f.type, f.categoryId, f.min, f.max, f.province, POOL]);
     const weights = await tx.query<{ value: unknown }>(`select value from platform_settings where key = 'match_weights'`);
     return { mine: mine.rows, candidates: candidates.rows, weights: weights.rows[0]?.value };
   });
@@ -119,22 +140,67 @@ export async function getDeck(viewer: { id: string; provinceCode: string | null 
 
   const cards = ranked.map(({ row: r, match }): DeckCard => ({
     id: r.id, type: r.type, title: r.title, estValueVnd: Number(r.est_value_vnd), categoryId: r.category_id,
-    provinceCode: r.province_code, condition: r.condition, expiresOn: r.expires_on, coverMediaId: r.cover_media_id, photoCount: r.photo_count,
+    provinceCode: r.province_code, condition: r.condition, expiresOn: r.expires_on,
+    coverMediaId: r.photo_ids[0] ?? null, photoCount: r.photo_ids.length, photoIds: r.photo_ids,
+    topupPayMaxVnd: Number(r.topup_pay_max_vnd), topupReceiveMaxVnd: Number(r.topup_receive_max_vnd),
+    sellPriceVnd: r.sell_price_vnd === null ? null : Number(r.sell_price_vnd), durationMinutes: r.duration_minutes, imeiConfirmed: r.imei_confirmed,
+    remote: isRemote(r.delivery_methods),
     owner: {
       name: r.owner_name, tier: r.tier, trustScore: r.trust_score, swaps: r.completed_swaps,
       rating: r.rating_avg === null ? null : Number(r.rating_avg),
     },
-    wants: {
-      categories: r.wants.filter((w) => w.t === 'category' && w.c).map((w) => w.c!),
-      keywords: r.wants.filter((w) => w.t === 'keyword' && w.k).map((w) => w.k!),
-      items: r.wants.filter((w) => w.t === 'item' && w.i && w.n).map((w) => ({ id: w.i!, title: w.n! })),
-    },
+    wants: toWantLists(r.wants),
     match: {
       score: match.score, parts: match.parts, iWant: match.iWant, theyWant: match.theyWant,
       pairedItem: match.pairedItemId ? { id: match.pairedItemId, title: myTitles.get(match.pairedItemId) ?? '' } : null,
     },
   }));
   return { cards, myActiveItems: myItems.length };
+}
+
+type FilterArgs = { type: ItemType | null; categoryId: string | null; min: number | null; max: number | null; province: string | null };
+
+function filterArgs(filters: DeckFilters, catalog: Awaited<ReturnType<typeof getCatalog>>): FilterArgs {
+  // Danh mục đã chọn thì loại món suy ra từ danh mục; danh mục và tỉnh/thành lạ thì coi như không lọc.
+  const category = filters.categoryId ? catalog.categoryById.get(filters.categoryId) : undefined;
+  const { min, max } = valueBounds(filters.valueRange);
+  return {
+    type: (category ? category.item_type : filters.type) ?? null,
+    categoryId: category ? filters.categoryId! : null,
+    min, max,
+    province: filters.provinceCode && catalog.provinceByCode.has(filters.provinceCode) ? filters.provinceCode : null,
+  };
+}
+
+/**
+ * Chồng thẻ xem thử cho khách chưa đăng nhập: vài món mới nhất theo bộ lọc, đọc dưới quyền khách.
+ * Truy vấn không đụng tới bảng profiles, nên thông tin người đăng không rời database.
+ */
+export async function getGuestDeck(filters: DeckFilters): Promise<GuestCard[]> {
+  const catalog = await getCatalog();
+  const f = filterArgs(filters, catalog);
+  const rows = await withActor({ kind: 'anon' }, async (tx) => (await tx.query<Omit<CandidateRow, 'owner_name' | 'trust_score' | 'tier' | 'completed_swaps' | 'rating_avg'>>(
+    `select i.id, i.type, i.title, i.category_id, i.est_value_vnd, i.topup_pay_max_vnd, i.topup_receive_max_vnd,
+            i.delivery_methods::text[] as delivery_methods, i.province_code, i.condition, i.expires_on::text as expires_on,
+            array(select m.id from item_media m where m.item_id = i.id and m.kind = 'photo' order by m.sort, m.created_at) as photo_ids,
+            i.sell_price_vnd, i.duration_minutes, (i.imei_last4 is not null and i.signed_out_confirmed) as imei_confirmed,
+            ${WANTS_JSON} as wants
+       from items i
+      where i.status = 'active'
+        and ($1::item_type is null or i.type = $1)
+        and ($2::text is null or i.category_id = $2)
+        and ($3::bigint is null or i.est_value_vnd >= $3)
+        and ($4::bigint is null or i.est_value_vnd < $4)
+        and ($5::text is null or i.province_code = $5)
+      order by i.created_at desc, i.id
+      limit $6`, [f.type, f.categoryId, f.min, f.max, f.province, GUEST_DECK_SIZE])).rows);
+  return rows.map((r) => ({
+    id: r.id, type: r.type, title: r.title, estValueVnd: Number(r.est_value_vnd), categoryId: r.category_id,
+    provinceCode: r.province_code, condition: r.condition, expiresOn: r.expires_on, photoIds: r.photo_ids,
+    topupPayMaxVnd: Number(r.topup_pay_max_vnd), topupReceiveMaxVnd: Number(r.topup_receive_max_vnd),
+    sellPriceVnd: r.sell_price_vnd === null ? null : Number(r.sell_price_vnd), durationMinutes: r.duration_minutes,
+    imeiConfirmed: r.imei_confirmed, remote: isRemote(r.delivery_methods), wants: toWantLists(r.wants),
+  }));
 }
 
 export type SwipeResult = { matched: boolean; matchId: string | null; isNew: boolean };
@@ -149,7 +215,7 @@ export function swipeItem(userId: string, itemId: string, direction: 'like' | 'p
 }
 
 /** Người xem đã quẹt món này chưa, và đã khớp với chủ món chưa (cho nút "Quan tâm" ở trang món). */
-export function getInterest(userId: string, itemId: string, ownerId: string): Promise<{ direction: 'like' | 'pass' | null; matchId: string | null }> {
+export function getDeckInterest(userId: string, itemId: string, ownerId: string): Promise<{ direction: 'like' | 'pass' | null; matchId: string | null }> {
   return withActor({ kind: 'user', id: userId }, async (tx) => {
     const r = await tx.query<{ direction: 'like' | 'pass' | null; match_id: string | null }>(
       `select (select s.direction::text from swipes s where s.viewer_id = auth.uid() and s.item_id = $1) as direction,

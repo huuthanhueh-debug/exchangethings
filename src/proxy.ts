@@ -11,7 +11,8 @@ import { isLoopbackDatabase } from '@/server/db-url';
 // Request của Server Action không đi qua đây (xem matcher): action tự làm mới phiên, và body upload ảnh
 // không bị proxy đệm hay cắt.
 
-const PROTECTED_PREFIXES = ['/ho-so', '/dang-mon', '/mon-cua-toi'];
+// /quet không nằm trong danh sách: khách được xem thử vài thẻ, trang tự phân biệt khách và thành viên.
+const PROTECTED_PREFIXES = ['/ho-so', '/dang-mon', '/mon-cua-toi', '/khop'];
 
 function devAuthAllowed(): boolean {
   return process.env.AUTH_MODE === 'dev' && !process.env.VERCEL && isLoopbackDatabase(process.env.DATABASE_URL);

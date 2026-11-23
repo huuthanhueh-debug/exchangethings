@@ -41,8 +41,8 @@ function Hero() {
           tiền bù được giữ qua trung gian tới khi cả hai nhận đủ.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
-          <LinkButton href="/dang-mon" size="lg">Đăng món</LinkButton>
-          <LinkButton href="#kham-pha" size="lg" variant="secondary">Xem món mới</LinkButton>
+          <LinkButton href="/quet" size="lg">Bắt đầu quẹt</LinkButton>
+          <LinkButton href="/dang-mon" size="lg" variant="secondary">Đăng món</LinkButton>
         </div>
         <ul className="mt-8 grid gap-3 text-sm text-ink-2 sm:grid-cols-3">
           {[
@@ -103,7 +103,7 @@ async function Listing({ searchParams }: { searchParams: PageProps<'/'>['searchP
   return (
     <>
       <Notice tone="accent" title="Bản thử nghiệm">
-        Đã có: đăng món và xem món. Quẹt, khớp, đề nghị đổi và thanh toán qua trung gian có ở các bản tiếp theo.
+        Đã có: đăng món, quẹt, khớp và nhắn tin. Đề nghị đổi và thanh toán qua trung gian có ở các bản tiếp theo.
       </Notice>
       <TypeFilter current={type} />
       {items.length === 0 ? (

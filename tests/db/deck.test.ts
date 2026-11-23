@@ -130,13 +130,37 @@ d('lớp server M2: chồng thẻ, khớp, chat', () => {
     });
   });
 
+  describe('chồng thẻ xem thử cho khách', () => {
+    it('8 món mới nhất, không có thông tin người đăng hay điểm gợi ý', async () => {
+      const cards = await deck.getGuestDeck(NO_FILTERS);
+      expect(cards).toHaveLength(8);
+      for (const c of cards) {
+        expect(Object.keys(c)).not.toEqual(expect.arrayContaining(['owner']));
+        expect(Object.keys(c)).not.toEqual(expect.arrayContaining(['match']));
+        expect(JSON.stringify(c)).not.toMatch(/Bình|Khánh|Dũng|Phúc|Giang|Hòa|Linh|trust|rating/);
+      }
+      const newest = await admin.query(`select id from items where status = 'active' order by created_at desc, id limit 8`);
+      expect(cards.map((c) => c.id)).toEqual(newest.rows.map((r) => r.id));
+    });
+    it('bộ lọc dùng chung với thành viên; không lộ món nháp hay món chờ duyệt', async () => {
+      const phones = await deck.getGuestDeck({ ...NO_FILTERS, categoryId: 'phones' });
+      expect(phones.map((c) => c.id).sort()).toEqual([ITEMS.anIphone15, ITEMS.binhIphone18].sort());
+      expect(phones.find((c) => c.id === ITEMS.binhIphone18)).toMatchObject({ imeiConfirmed: true, remote: false, topupReceiveMaxVnd: 4_000_000 });
+      const all = await admin.query(`select count(*)::int as n from items where status <> 'active'`);
+      expect(all.rows[0].n).toBe(2);
+      const music = await deck.getGuestDeck({ ...NO_FILTERS, categoryId: 'music' }); // chỉ có một món nháp ở danh mục này
+      expect(music).toEqual([]);
+      expect(await deck.getGuestDeck({ ...NO_FILTERS, categoryId: 'other' })).toEqual([]); // món "khác" đang chờ duyệt
+    });
+  });
+
   describe('quẹt và trạng thái quan tâm', () => {
     it('e2e mức server: An thích iPhone 18, Bình thích iPhone 15 thì khớp, cả hai thấy match', async () => {
       expect(await deck.swipeItem(USERS.an, ITEMS.binhIphone18, 'like')).toEqual({ matched: false, matchId: null, isNew: false });
-      expect(await deck.getInterest(USERS.an, ITEMS.binhIphone18, USERS.binh)).toEqual({ direction: 'like', matchId: null });
+      expect(await deck.getDeckInterest(USERS.an, ITEMS.binhIphone18, USERS.binh)).toEqual({ direction: 'like', matchId: null });
       const r = await deck.swipeItem(USERS.binh, ITEMS.anIphone15, 'like');
       expect(r).toMatchObject({ matched: true, isNew: true });
-      expect(await deck.getInterest(USERS.an, ITEMS.binhIphone18, USERS.binh)).toEqual({ direction: 'like', matchId: r.matchId });
+      expect(await deck.getDeckInterest(USERS.an, ITEMS.binhIphone18, USERS.binh)).toEqual({ direction: 'like', matchId: r.matchId });
       const forAn = await matches.getMatch(USERS.an, r.matchId!);
       expect(forAn).toMatchObject({
         other: { name: 'Bình', tier: 'high', trustScore: 92 }, theirItem: { id: ITEMS.binhIphone18, title: 'iPhone 18 256GB' },

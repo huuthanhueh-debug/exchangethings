@@ -30,3 +30,30 @@ export function formatDateVi(isoDate: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : isoDate;
 }
+
+// Giờ Việt Nam cố định UTC+7, không có giờ mùa hè: tự cộng 7 giờ thay vì dùng Intl, để server và trình duyệt
+// luôn ra cùng một chuỗi (không lệch khi hydrate).
+const VN_OFFSET_MS = 7 * 3_600_000;
+const vnIso = (iso: string) => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : new Date(ms + VN_OFFSET_MS).toISOString();
+};
+
+/** "2026-11-20T03:05:00Z" -> "10:05" theo giờ Việt Nam. */
+export function formatTimeVn(iso: string): string {
+  return vnIso(iso)?.slice(11, 16) ?? '';
+}
+
+/** Ngày theo giờ Việt Nam, dạng YYYY-MM-DD: dùng để gom tin nhắn theo ngày. */
+export function vnDayKey(iso: string): string {
+  return vnIso(iso)?.slice(0, 10) ?? '';
+}
+
+/** Mốc thời gian ngắn cho danh sách: cùng ngày thì "10:05", khác ngày thì "20/11", khác năm thì "20/11/2025". */
+export function formatWhenVn(iso: string, todayKey: string): string {
+  const day = vnDayKey(iso);
+  if (!day) return '';
+  if (day === todayKey) return formatTimeVn(iso);
+  const [y, m, d] = day.split('-');
+  return y === todayKey.slice(0, 4) ? `${d}/${m}` : `${d}/${m}/${y}`;
+}

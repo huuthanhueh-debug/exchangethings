@@ -36,7 +36,8 @@ export type ItemDetail = ItemCard & {
   durationMinutes: number | null;
   reviewNote: string | null;
   media: { id: string; kind: 'photo' | 'proof'; width: number | null; height: number | null }[];
-  wants: { categories: string[]; keywords: string[] };
+  /** items: món cụ thể muốn đổi lấy; chỉ gồm món mà người xem được phép thấy. */
+  wants: { categories: string[]; keywords: string[]; items: { id: string; title: string }[] };
 };
 
 const CARD_COLUMNS = `
@@ -102,8 +103,10 @@ export function getItem(actor: Actor, id: string): Promise<ItemDetail | null> {
     if (!row) return null;
     const media = await tx.query<ItemDetail['media'][number]>(
       `select id, kind, width, height from item_media where item_id = $1 order by kind desc, sort, created_at`, [id]);
-    const wants = await tx.query<{ want_type: string; category_id: string | null; keyword: string | null }>(
-      `select want_type, category_id, keyword from item_wants where item_id = $1 order by id`, [id]);
+    const wants = await tx.query<{ want_type: string; category_id: string | null; keyword: string | null; wanted_item_id: string | null; wanted_title: string | null }>(
+      `select w.want_type, w.category_id, w.keyword, w.wanted_item_id, x.title as wanted_title
+         from item_wants w left join items x on x.id = w.wanted_item_id
+        where w.item_id = $1 order by w.id`, [id]);
     return {
       ...toCard(row),
       ownerId: row.owner_id,
@@ -125,6 +128,8 @@ export function getItem(actor: Actor, id: string): Promise<ItemDetail | null> {
       wants: {
         categories: wants.rows.filter((w) => w.want_type === 'category' && w.category_id).map((w) => w.category_id!),
         keywords: wants.rows.filter((w) => w.want_type === 'keyword' && w.keyword).map((w) => w.keyword!),
+        items: wants.rows.filter((w) => w.want_type === 'item' && w.wanted_item_id && w.wanted_title)
+          .map((w) => ({ id: w.wanted_item_id!, title: w.wanted_title! })),
       },
     };
   });

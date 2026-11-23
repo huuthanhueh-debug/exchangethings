@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   poweredByHeader: false,
+  // Nút báo trạng thái của Next ở chế độ dev nằm đè lên mục đầu của thanh điều hướng dưới: tắt đi. Lỗi vẫn hiện như thường.
+  devIndicators: false,
   experimental: {
     serverActions: { bodySizeLimit: UPLOAD_LIMIT },
     // Proxy đệm body request tới giới hạn này; vượt quá thì body bị cắt. Giữ bằng giới hạn upload.

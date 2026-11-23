@@ -63,7 +63,7 @@ d('lớp service: đăng, sửa, rút món dưới quyền người dùng', () =
     expect(await files()).toBe(3);
     const detail = await items.getItem({ kind: 'user', id: USERS.an }, id);
     expect(detail).toMatchObject({ status: 'draft', photoCount: 3, title: speaker.title, estValueVnd: 2_500_000 });
-    expect(detail?.wants).toEqual({ categories: ['cameras'], keywords: ['máy ảnh film'] });
+    expect(detail?.wants).toEqual({ categories: ['cameras'], keywords: ['máy ảnh film'], items: [] });
     // Khách và người khác không thấy món nháp.
     expect(await items.getItem({ kind: 'anon' }, id)).toBeNull();
     expect(await items.getItem({ kind: 'user', id: USERS.binh }, id)).toBeNull();
