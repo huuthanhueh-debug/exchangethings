@@ -79,8 +79,8 @@ d('RLS và quyền truy cập (SPEC mục 10)', () => {
   describe('dữ liệu riêng tư', () => {
     it('khách và người khác không đọc được số điện thoại, IMEI đầy đủ', async () => {
       await as(c, 'anon', async () => {
-        expect(await rows(c, 'select * from profile_private')).toHaveLength(0);
-        expect(await rows(c, 'select * from item_private')).toHaveLength(0);
+        expect(await expectError(c, 'select * from profile_private')).toMatch(/permission denied/);
+        expect(await expectError(c, 'select * from item_private')).toMatch(/permission denied/);
       });
       await as(c, { sub: USERS.binh }, async () => {
         expect(await rows(c, 'select * from profile_private where id = $1', [USERS.an])).toHaveLength(0);

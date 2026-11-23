@@ -10,6 +10,9 @@ import pg from 'pg';
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const MIGRATIONS_DIR = join(ROOT, 'supabase/migrations');
 export const SETUP_SQL_PATH = join(ROOT, 'supabase/setup.sql');
+export const UPGRADE_SQL_PATH = join(ROOT, 'supabase/upgrade.sql');
+/** Migration cuối của bản M1. upgrade.sql coi các file tới mốc này là đã cài (chỉ đối chiếu), các file sau thì chạy nếu thiếu. */
+export const BASELINE_VERSION = '20261122000310';
 
 /** Lỗi có thông báo dành cho người dùng (không kèm stack). */
 export class DbToolError extends Error {}
@@ -177,8 +180,10 @@ export async function migrate(client, migrations, { log = () => {}, dryRun = fal
 
 // --- Khám database: đúng những thứ app cần để chạy ----------------------------------------------------------------
 const ANON_FUNCTIONS = ['is_active_user', 'is_admin', 'is_banned'];
-const USER_FUNCTIONS = [...ANON_FUNCTIONS, 'admin_review_item', 'my_item_severity', 'my_profile', 'publish_item', 'withdraw_item'].sort();
-const NEED_POLICY = ['categories', 'item_media', 'item_private', 'item_reviews', 'item_wants', 'items', 'profile_private', 'profiles', 'provinces', 'wards'];
+const USER_FUNCTIONS = [...ANON_FUNCTIONS, 'admin_review_item', 'is_blocked_with', 'mark_match_read', 'my_item_severity', 'my_profile',
+  'publish_item', 'send_message', 'swipe_item', 'withdraw_item'].sort();
+const NEED_POLICY = ['blocks', 'categories', 'item_media', 'item_private', 'item_reviews', 'item_wants', 'items', 'match_reads', 'matches',
+  'messages', 'notifications', 'profile_private', 'profiles', 'provinces', 'swipes', 'wards'];
 
 /**
  * Trả danh sách { id, label, ok (true/false/null = bỏ qua), detail, fix }. Chỉ đọc, không đổi dữ liệu.
@@ -205,7 +210,7 @@ export async function doctor(client, migrations, { tls = null, loopback = false 
     async () => { await assertSupabaseLike(client); return { ok: true }; });
   await check('ctype', 'Database hiểu chữ tiếng Việt (LC_CTYPE Unicode)', 'Tạo lại project Supabase với cấu hình mặc định.',
     async () => ({ ok: (await q(`select 'ú' ~ '[[:alpha:]]' and lower('ĐẠN') = 'đạn' as ok`))[0].ok }));
-  await check('migrations', `Đã chạy đủ ${migrations.length} migration`, 'Chạy: pnpm db:migrate (hoặc dán supabase/setup.sql vào SQL Editor nếu là project mới).', async () => {
+  await check('migrations', `Đã chạy đủ ${migrations.length} migration`, 'Chạy: pnpm db:migrate, hoặc dán supabase/upgrade.sql vào SQL Editor (project mới thì dán supabase/setup.sql).', async () => {
     const st = await status(client, migrations);
     const bad = [...st.pending.map((m) => `chưa chạy ${m.file}`), ...st.modified.map((m) => `file đã bị sửa ${m.file}`)];
     return { ok: bad.length === 0 && st.applied.length === migrations.length, detail: bad.join('; ') };
@@ -233,7 +238,11 @@ export async function doctor(client, migrations, { tls = null, loopback = false 
       has_table_privilege('authenticated', 'public.item_media', 'insert') as "người dùng tự ghi ảnh",
       has_column_privilege('authenticated', 'public.items', 'status', 'update') as "người dùng tự đổi trạng thái món",
       has_column_privilege('authenticated', 'public.profiles', 'trust_score', 'update') as "người dùng tự sửa điểm uy tín",
-      has_column_privilege('anon', 'public.profiles', 'ward_code', 'select') as "khách đọc phường/xã của người khác"`))[0];
+      has_column_privilege('anon', 'public.profiles', 'ward_code', 'select') as "khách đọc phường/xã của người khác",
+      has_table_privilege('authenticated', 'public.swipes', 'insert') as "người dùng tự ghi lượt quẹt",
+      has_table_privilege('authenticated', 'public.matches', 'insert') as "người dùng tự tạo match",
+      has_table_privilege('authenticated', 'public.messages', 'insert') as "người dùng tự ghi tin nhắn (bỏ qua bước che liên lạc)",
+      has_table_privilege('anon', 'public.messages', 'select') as "khách đọc tin nhắn"`))[0];
     const bad = Object.entries(r).filter(([, v]) => v).map(([k]) => k);
     return { ok: bad.length === 0, detail: bad.join('; ') };
   });
@@ -254,6 +263,11 @@ export async function doctor(client, migrations, { tls = null, loopback = false 
   await check('filter', 'Bộ lọc từ khóa bắt được chữ giấu ký tự vô hình, không bắt nhầm', 'Kiểm tra LC_CTYPE và chạy lại migration.', async () => {
     const r = (await q(`select public.banned_keyword_severity('va' || chr(8203) || 'pe')::text as hidden, public.banned_keyword_severity('Đàn ukulele gỗ')::text as clean`))[0];
     return { ok: r.hidden === 'block' && r.clean === null };
+  });
+  await check('chat', 'Chat che số điện thoại, số tài khoản; không che số tiền', 'Chạy lại migration M2 (quẹt, khớp, chat).', async () => {
+    const r = (await q(`select public.mask_contacts('gọi 0905 123 456') as phone, public.mask_contacts('ck 19035551234567') as account,
+      public.mask_contacts('giá 13.000.000 ₫') as money`))[0];
+    return { ok: r.phone === 'gọi [đã ẩn số điện thoại]' && r.account === 'ck [đã ẩn dãy số]' && r.money === 'giá 13.000.000 ₫' };
   });
   await check('signup', 'Tài khoản mới tự có hồ sơ (trigger trên auth.users)', 'Chạy lại migration schema.', async () => {
     const n = (await q(`select count(*)::int as n from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace s on s.oid = c.relnamespace
@@ -318,6 +332,84 @@ export function buildSetupSql(migrations) {
     "    not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity)),",
     "  ('Bộ lọc từ khóa hoạt động', public.banned_keyword_severity('va' || chr(8203) || 'pe') = 'block'),",
     `  ('Sổ migration ghi đủ ${migrations.length} file', (select count(*) from app_meta.migrations) = ${migrations.length})`,
+    ') as t("Kiểm tra", "Đạt");', '');
+  return parts.join('\n');
+}
+
+// --- Một file SQL để CẬP NHẬT project đã cài, cũng dán vào SQL Editor ------------------------------------------------
+/**
+ * Sinh supabase/upgrade.sql: chạy các migration sau bản M1 mà database còn thiếu, theo thứ tự, trong một transaction.
+ * Dán lại bao nhiêu lần cũng được: file nào đã có trong sổ thì bỏ qua. Dừng (không đổi gì) khi database chưa cài,
+ * khi thiếu migration của bản M1, hoặc khi một migration đã chạy có nội dung khác bản trong repo.
+ */
+export function buildUpgradeSql(migrations, baselineVersion = BASELINE_VERSION) {
+  const q = (s) => `'${s.replace(/'/g, "''")}'`;
+  const base = migrations.filter((m) => m.version <= baselineVersion);
+  const later = migrations.filter((m) => m.version > baselineVersion);
+  const parts = [
+    '-- Exchangethings.vn: CẬP NHẬT database cho một project Supabase ĐÃ CÀI bản trước.',
+    '-- Cách dùng: Supabase > SQL Editor > New query > dán toàn bộ file này > Run. Không cần token, không cần dòng lệnh.',
+    '-- Chỉ chạy các migration còn thiếu; dán lại lần nữa thì không làm gì. Chạy trong một transaction: lỗi ở đâu thì không có gì thay đổi.',
+    '-- Project mới hoàn toàn thì dùng supabase/setup.sql.',
+    '-- File sinh tự động bởi scripts/build-setup-sql.mjs từ supabase/migrations; không sửa tay.',
+    '',
+    'begin;',
+    '',
+    'do $check$',
+    'begin',
+    "  if to_regclass('app_meta.migrations') is null then",
+    "    raise exception 'Database này chưa cài Exchangethings.vn. Project mới thì dán supabase/setup.sql; không có gì thay đổi.';",
+    '  end if;',
+    'end $check$;',
+    "select pg_advisory_xact_lock(hashtext('exchangethings.migrations'));",
+    '',
+    '-- Bản đã cài phải có đủ và đúng các migration của bản M1.',
+    'do $check$',
+    'declare',
+    '  v_problem text;',
+    'begin',
+    '  select string_agg(e.file || case when l.version is null then \' (chưa chạy)\' else \' (nội dung khác bản trong repo)\' end, \', \' order by e.version)',
+    '    into v_problem',
+    '    from (values',
+    base.map((m) => `      (${q(m.version)}, ${q(m.file)}, ${q(m.checksum)})`).join(',\n'),
+    '    ) as e(version, file, checksum)',
+    '    left join app_meta.migrations l on l.version = e.version',
+    '   where l.version is null or l.checksum <> e.checksum;',
+    '  if v_problem is not null then',
+    "    raise exception 'Bản đã cài không khớp bản M1: %. Dừng lại, không có gì thay đổi.', v_problem;",
+    '  end if;',
+    'end $check$;',
+  ];
+  for (const m of later) {
+    const tag = `$migration_${m.version}$`;
+    if (m.sql.includes(tag) || m.sql.includes('$upgrade$')) throw new DbToolError(`${m.file}: nội dung trùng dấu ngoặc của upgrade.sql (${tag}).`);
+    parts.push('', `-- ===== ${m.file} =====`,
+      'do $upgrade$',
+      'begin',
+      `  if exists (select 1 from app_meta.migrations where version = ${q(m.version)} and checksum <> ${q(m.checksum)}) then`,
+      `    raise exception 'Migration ${m.file} đã chạy với nội dung khác bản trong repo. Dừng lại, không có gì thay đổi.';`,
+      '  end if;',
+      `  if not exists (select 1 from app_meta.migrations where version = ${q(m.version)}) then`,
+      `    if exists (select 1 from app_meta.migrations where version > ${q(m.version)}) then`,
+      `      raise exception 'Migration ${m.file} cũ hơn bản đã chạy. Dừng lại, không có gì thay đổi.';`,
+      '    end if;',
+      `    execute ${tag}`,
+      m.sql.trimEnd(),
+      `${tag};`,
+      `    insert into app_meta.migrations (version, name, checksum) values (${q(m.version)}, ${q(m.name)}, ${q(m.checksum)});`,
+      '  end if;',
+      'end $upgrade$;');
+  }
+  parts.push('', 'commit;', '',
+    '-- Kết quả hiện ngay dưới khung soạn thảo: mọi dòng phải là true.',
+    'select * from (values',
+    `  ('Sổ migration ghi đủ ${migrations.length} file', (select count(*) from app_meta.migrations) = ${migrations.length}),`,
+    "  ('Mọi bảng đều bật Row Level Security',",
+    "    not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity)),",
+    "  ('Khách và người dùng không tự ghi được tin nhắn',",
+    "    not has_table_privilege('anon', 'public.messages', 'select') and not has_table_privilege('authenticated', 'public.messages', 'insert')),",
+    "  ('Chat che số điện thoại, không che số tiền',",
+    "    public.mask_contacts('gọi 0905 123 456') = 'gọi [đã ẩn số điện thoại]' and public.mask_contacts('giá 13.000.000 ₫') = 'giá 13.000.000 ₫')",
     ') as t("Kiểm tra", "Đạt");', '');
   return parts.join('\n');
 }

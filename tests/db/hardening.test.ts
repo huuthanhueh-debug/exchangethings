@@ -88,7 +88,8 @@ d('chống lách sau rà soát độc lập', () => {
         for (const who of [{ sub: USERS.giang }, { sub: USERS.binh }, 'anon'] as const) {
           await actAs(c, who);
           expect((await rows(c, 'select review_note from items where id = $1', [ITEMS.giangBonsaiPending]))[0].review_note).toBeNull();
-          expect(await rows(c, 'select id from item_reviews')).toHaveLength(0);
+          if (who === 'anon') expect(await expectError(c, 'select id from item_reviews')).toMatch(/permission denied/);
+          else expect(await rows(c, 'select id from item_reviews')).toHaveLength(0);
         }
       });
     });
@@ -163,7 +164,51 @@ d('chống lách sau rà soát độc lập', () => {
           where n.nspname = 'public' and has_function_privilege($1, p.oid, 'execute') order by 1`, [role])).map((r) => r.name);
       const forAnon = ['is_active_user', 'is_admin', 'is_banned'];
       expect(await callable('anon')).toEqual(forAnon);
-      expect(await callable('authenticated')).toEqual([...forAnon, 'admin_review_item', 'my_item_severity', 'my_profile', 'publish_item', 'withdraw_item'].sort());
+      expect(await callable('authenticated')).toEqual([...forAnon, 'admin_review_item', 'is_blocked_with', 'mark_match_read',
+        'my_item_severity', 'my_profile', 'publish_item', 'send_message', 'swipe_item', 'withdraw_item'].sort());
+    });
+  });
+
+  describe('quyền trên bảng', () => {
+    // Supabase cấp sẵn ALL trên mọi bảng MỚI cho anon và authenticated. Ba test này canh danh sách:
+    // thêm bảng mới mà quên thu hồi, hoặc cấp thừa một cột, thì test đỏ.
+    const tablePrivileges = (role: string, privileges: string[]) => rows<{ t: string; p: string }>(c, `
+      select c.relname::text as t, p.priv as p
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace, unnest($2::text[]) as p(priv)
+       where n.nspname = 'public' and c.relkind in ('r', 'p', 'v', 'm') and has_table_privilege($1, c.oid, p.priv)
+       order by 1, 2`, [role, privileges]);
+    const columnPrivileges = (role: string) => rows<{ t: string; p: string; cols: string }>(c, `
+      select c.relname::text as t, p.priv as p, string_agg(a.attname::text, ' ' order by a.attname) as cols
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped,
+             unnest(array['INSERT', 'UPDATE']) as p(priv)
+       where n.nspname = 'public' and c.relkind in ('r', 'p') and has_column_privilege($1, c.oid, a.attnum, p.priv)
+       group by 1, 2 order by 1, 2`, [role]);
+    const WRITE = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+
+    it('khách không ghi được bảng nào, cột nào; chỉ đọc được dữ liệu tham chiếu, hồ sơ công khai, món và đánh giá', async () => {
+      expect(await tablePrivileges('anon', WRITE)).toEqual([]);
+      expect(await columnPrivileges('anon')).toEqual([]);
+      expect((await tablePrivileges('anon', ['SELECT'])).map((r) => r.t))
+        .toEqual(['categories', 'item_media', 'item_wants', 'items', 'platform_settings', 'provinces', 'reviews', 'wards']);
+    });
+    it('người dùng chỉ có đúng các quyền ghi mức bảng trong danh sách', async () => {
+      expect(await tablePrivileges('authenticated', WRITE)).toEqual([{ t: 'blocks', p: 'DELETE' }, { t: 'item_wants', p: 'DELETE' }]);
+    });
+    it('người dùng chỉ ghi được đúng các cột trong danh sách', async () => {
+      const itemColumns = 'category_id condition delivery_methods description duration_minutes est_value_vnd expires_on province_code '
+        + 'sell_price_vnd signed_out_confirmed title topup_pay_max_vnd topup_receive_max_vnd transfer_right_confirmed';
+      expect(await columnPrivileges('authenticated')).toEqual([
+        { t: 'blocks', p: 'INSERT', cols: 'blocked_id blocker_id' },
+        { t: 'item_private', p: 'INSERT', cols: 'imei_full item_id owner_id' },
+        { t: 'item_private', p: 'UPDATE', cols: 'imei_full' },
+        { t: 'item_wants', p: 'INSERT', cols: 'category_id item_id keyword want_type wanted_item_id' },
+        { t: 'items', p: 'INSERT', cols: itemColumns.replace('category_id ', 'category_id ').replace('expires_on ', 'expires_on owner_id ').replace(' title', ' title').replace('transfer_right_confirmed', 'transfer_right_confirmed type') },
+        { t: 'items', p: 'UPDATE', cols: itemColumns },
+        { t: 'notifications', p: 'UPDATE', cols: 'read_at' },
+        { t: 'profile_private', p: 'UPDATE', cols: 'phone_e164 street_address' },
+        { t: 'profiles', p: 'UPDATE', cols: 'avatar_path bio display_name locale province_code ward_code' },
+      ]);
     });
   });
 

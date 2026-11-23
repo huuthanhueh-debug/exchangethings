@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ADMIN_UNITS_SQL_PATH, buildAdminUnitsSql } from '../../scripts/generate-admin-units-sql.mjs';
 import { SEED_SQL_PATH, buildSeedSql } from '../../scripts/generate-seed.mjs';
-import { SETUP_SQL_PATH, buildSetupSql, loadMigrations, parseDatabaseUrl as parseJs } from '../../scripts/lib/db-tools.mjs';
+import { SETUP_SQL_PATH, UPGRADE_SQL_PATH, buildSetupSql, buildUpgradeSql, loadMigrations, parseDatabaseUrl as parseJs } from '../../scripts/lib/db-tools.mjs';
 import { parseDatabaseUrl as parseTs } from '@/server/db-url';
 
 // File SQL sinh tự động không được sửa tay: nội dung phải khớp từng byte với output của script.
@@ -16,6 +16,9 @@ describe('file SQL sinh tự động', () => {
   });
   it('supabase/setup.sql khớp scripts/build-setup-sql.mjs (chạy pnpm db:setup-sql sau khi thêm migration)', () => {
     expect(readFileSync(SETUP_SQL_PATH, 'utf8')).toBe(buildSetupSql(loadMigrations()));
+  });
+  it('supabase/upgrade.sql khớp scripts/build-setup-sql.mjs', () => {
+    expect(readFileSync(UPGRADE_SQL_PATH, 'utf8')).toBe(buildUpgradeSql(loadMigrations()));
   });
   it('script và app đọc DATABASE_URL theo cùng một quy tắc', () => {
     const outcome = (fn: (u: string) => unknown, u: string) => { try { return fn(u); } catch { return 'từ chối'; } };

@@ -52,7 +52,7 @@ const PHYS = ['carrier', 'meetup'];
 const items = [
   // Kịch bản 1 đến 5
   [1, 'an', 'physical', 'phones', 'iPhone 15 128GB', 13000000, { condition: 'good', pay: 3000000, delivery: PHYS, imei: '4821', wants: [['category', 'phones'], ['keyword', 'iPhone 18']] }],
-  [2, 'binh', 'physical', 'phones', 'iPhone 18 256GB', 17000000, { condition: 'like_new', receive: 4000000, delivery: PHYS, imei: '7730', wants: [['keyword', 'iPhone 15'], ['keyword', 'MacBook Air'], ['category', 'cameras']] }],
+  [2, 'binh', 'physical', 'phones', 'iPhone 18 256GB', 17000000, { condition: 'like_new', receive: 4000000, delivery: PHYS, imei: '7730', wants: [['item', 1], ['keyword', 'MacBook Air'], ['category', 'cameras']] }],
   [3, 'chi', 'physical', 'luxury-fashion', 'Áo sơ mi Gucci size M', 8000000, { condition: 'like_new', delivery: ['meetup'], proof: true, wants: [['category', 'luxury-shoes']] }],
   [4, 'dung', 'physical', 'luxury-shoes', 'Giày da Zegna size 42', 9000000, { condition: 'good', delivery: ['meetup'], proof: true, wants: [['category', 'luxury-fashion']] }],
   [5, 'em', 'course_code', 'courses', 'Mã kích hoạt khóa học thiết kế UI online', 1200000, { expires: '2026-12-31', wants: [['category', 'templates']] }],
@@ -85,6 +85,8 @@ const items = [
 ];
 
 export const SEED_SQL_PATH = join(root, 'supabase/seed.sql');
+/** Match mẫu giữa Chi và Dũng (kịch bản 2). */
+export const SEED_MATCH_ID = '00000000-0000-4000-b000-000000000001';
 
 /** Danh sách ảnh mẫu (đường dẫn trong bucket item-media) kèm tên món, cho scripts/generate-seed-media.mjs. */
 export function seedMediaManifest() {
@@ -128,7 +130,7 @@ export function buildSeedSql() {
     }
     if (x.proof) media.push(`  (${q(mid(n, 9))}, ${q(iid(n))}, ${q(uid(u.n))}, 'proof', ${q(`seed/${iid(n)}/proof-1.webp`)}, 1200, 1600, true, 0)`);
     for (const [t, v] of x.wants ?? []) {
-      wants.push(`  (${q(iid(n))}, ${q(t)}, ${t === 'category' ? q(v) : 'null'}, ${t === 'keyword' ? q(v) : 'null'})`);
+      wants.push(`  (${q(iid(n))}, ${q(t)}, ${t === 'item' ? q(iid(v)) : 'null'}, ${t === 'category' ? q(v) : 'null'}, ${t === 'keyword' ? q(v) : 'null'})`);
     }
     const created = `2026-11-${String(1 + (n % 20)).padStart(2, '0')}T08:00:00Z`;
     return `  (${q(iid(n))}, ${q(uid(u.n))}, ${q(type)}, ${q(cat)}, ${q(title)}, ${q(`Mô tả mẫu cho món: ${title}.`)}, ${q(x.condition ?? 'not_applicable')}, ${value}, ${x.pay ?? 0}, ${x.receive ?? 0}, ${x.sell ?? 'null'}, ${q(`{${delivery.join(',')}}`)}, ${q(u.province)}, ${x.expires ? q(x.expires) : 'null'}, ${Boolean(x.imei)}, ${digital}, ${x.duration ?? 'null'}, 'draft', ${q(created)})`;
@@ -140,7 +142,7 @@ export function buildSeedSql() {
   out.push('insert into public.item_media (id, item_id, owner_id, kind, storage_path, width, height, exif_stripped, sort) values');
   out.push(media.join(',\n') + ';');
   out.push('');
-  out.push('insert into public.item_wants (item_id, want_type, category_id, keyword) values');
+  out.push('insert into public.item_wants (item_id, want_type, wanted_item_id, category_id, keyword) values');
   out.push(wants.join(',\n') + ';');
   // Món được tạo ở nháp (IMEI, ảnh chỉ ghi được khi món chưa đăng), giờ mới đặt trạng thái cuối.
   out.push('');
@@ -148,6 +150,29 @@ export function buildSeedSql() {
     const ids = items.filter(([, , , , , , x]) => (x.status ?? 'active') === status).map(([n]) => q(iid(n)));
     if (ids.length) out.push(`update public.items set status = ${q(status)} where id in (${ids.join(', ')});`);
   }
+  // Kịch bản 2 đã qua bước khớp: Chi thích giày Zegna của Dũng, Dũng thích áo Gucci của Chi, hai người đang trò chuyện.
+  // Các cặp còn lại để trống cho người dùng thử tự quẹt (kịch bản 1: An và Bình).
+  out.push('');
+  const chi = uid(U.chi.n);
+  const dung = uid(U.dung.n);
+  const [userA, userB, itemA, itemB] = chi < dung ? [chi, dung, iid(3), iid(4)] : [dung, chi, iid(4), iid(3)];
+  out.push('insert into public.swipes (viewer_id, item_id, direction, created_at) values');
+  out.push([
+    `  (${q(chi)}, ${q(iid(4))}, 'like', '2026-11-20T02:00:00Z')`,
+    `  (${q(dung)}, ${q(iid(3))}, 'like', '2026-11-20T03:00:00Z')`,
+  ].join(',\n') + ';');
+  out.push('insert into public.matches (id, user_a, user_b, item_a, item_b, created_at) values');
+  out.push(`  (${q(SEED_MATCH_ID)}, ${q(userA)}, ${q(userB)}, ${q(itemA)}, ${q(itemB)}, '2026-11-20T03:00:00Z');`);
+  const chat = [
+    [chi, 'Chào anh, em thích đôi Zegna của anh. Giày còn hộp và hóa đơn không ạ?', '2026-11-20T03:05:00Z'],
+    [dung, 'Chào em, còn đủ hộp và hóa đơn. Áo Gucci của em mặc mấy lần rồi?', '2026-11-20T03:09:00Z'],
+    [chi, 'Em mặc hai lần thôi ạ. Cuối tuần mình gặp ở Quận 1 để xem hàng được không anh?', '2026-11-20T03:12:00Z'],
+  ];
+  out.push('insert into public.messages (id, match_id, sender_id, body, created_at) values');
+  out.push(chat.map(([sender, body, at], k) => `  (${q(`00000000-0000-4000-c000-${String(k + 1).padStart(12, '0')}`)}, ${q(SEED_MATCH_ID)}, ${q(sender)}, ${q(body)}, ${q(at)})`).join(',\n') + ';');
+  // Chi đã đọc hết; Dũng chưa đọc tin cuối của Chi.
+  out.push('insert into public.match_reads (match_id, user_id, last_read_at) values');
+  out.push(`  (${q(SEED_MATCH_ID)}, ${q(chi)}, '2026-11-20T03:12:00Z'),\n  (${q(SEED_MATCH_ID)}, ${q(dung)}, '2026-11-20T03:09:00Z');`);
   out.push('commit;');
   const summary = {
     users: users.length,

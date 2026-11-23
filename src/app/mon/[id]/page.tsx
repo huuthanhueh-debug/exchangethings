@@ -2,19 +2,20 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
-import { ArrowLeftIcon, ArrowsLeftRightIcon, SealCheckIcon, ShieldCheckIcon, StarIcon } from '@phosphor-icons/react/ssr';
+import { ArrowLeftIcon, HeartIcon, SealCheckIcon, ShieldCheckIcon, StarIcon } from '@phosphor-icons/react/ssr';
 import { ItemFacts } from '@/components/item-facts';
 import { ExpiryBadge, MediaImage, StatusBadge, TypePlaceholder } from '@/components/item-visuals';
-import { Badge, Card, LinkButton, Skeleton, buttonClass } from '@/components/ui';
+import { Badge, Card, LinkButton, Skeleton } from '@/components/ui';
 import { formatVnd } from '@/lib/format';
 import { ITEM_TYPE_META, todayInVietnam } from '@/lib/items';
 import { getCatalog } from '@/server/catalog';
+import { TIER_LABEL as TIER } from '@/lib/tiers';
+import { getDeckInterest as getInterest } from '@/server/deck';
 import { getItem } from '@/server/items';
 import { actorOf, getViewer } from '@/server/session';
+import { InterestButton } from './interest';
 
 export const metadata: Metadata = { title: 'Chi tiết món' };
-
-const TIER = { new: 'Thành viên mới', regular: 'Thành viên', high: 'Uy tín cao' } as const;
 
 export default function ItemPage({ params }: PageProps<'/mon/[id]'>) {
   return (
@@ -36,6 +37,7 @@ async function ItemContent({ params }: { params: PageProps<'/mon/[id]'>['params'
   if (!item) notFound();
   const catalog = await getCatalog();
   const isOwner = viewer?.id === item.ownerId;
+  const interest = viewer && !isOwner && item.status === 'active' ? await getInterest(viewer.id, item.id, item.ownerId) : null;
   const photos = item.media.filter((m) => m.kind === 'photo');
   const category = item.categoryId ? catalog.categoryById.get(item.categoryId) : undefined;
   const meta = ITEM_TYPE_META[item.type];
@@ -89,12 +91,14 @@ async function ItemContent({ params }: { params: PageProps<'/mon/[id]'>['params'
 
         {isOwner ? (
           <LinkButton href={`/mon-cua-toi/${item.id}`} className="w-full" size="lg">Quản lý món này</LinkButton>
+        ) : item.status !== 'active' ? null : viewer && interest ? (
+          <InterestButton key={viewer.id} itemId={item.id} ownerName={item.ownerName} initial={{ liked: interest.direction === 'like', matchId: interest.matchId }} />
         ) : (
           <div className="space-y-2">
-            <button type="button" disabled className={buttonClass('primary', 'lg', 'w-full')}>
-              <ArrowsLeftRightIcon size={20} weight="bold" aria-hidden /> Đề nghị đổi
-            </button>
-            <p className="text-center text-sm text-muted">Quẹt, khớp và đề nghị đổi có ở bản tiếp theo.</p>
+            <LinkButton href={`/dang-nhap?next=${encodeURIComponent(`/mon/${item.id}`)}`} className="w-full" size="lg">
+              <HeartIcon size={20} weight="bold" aria-hidden /> Đăng nhập để quan tâm
+            </LinkButton>
+            <p className="text-center text-sm text-muted">Hai bên cùng quan tâm món của nhau thì khớp và nhắn tin được.</p>
           </div>
         )}
 

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { formatDateVi, formatVnd } from '@/lib/format';
 import { CONDITION_LABEL, DELIVERY_LABEL, ITEM_TYPE_META } from '@/lib/items';
 import type { Catalog } from '@/server/catalog';
@@ -31,6 +32,7 @@ export function ItemFacts({ item, catalog }: { item: ItemDetail; catalog: Catalo
     ...item.wants.categories.map((id) => catalog.categoryById.get(id)?.nameVi ?? id),
     ...item.wants.keywords,
   ];
+  const wantedItems = item.wants.items;
 
   return (
     <div className="space-y-4">
@@ -44,8 +46,15 @@ export function ItemFacts({ item, catalog }: { item: ItemDetail; catalog: Catalo
       </dl>
       <div>
         <p className="mb-1.5 text-sm font-semibold text-ink">Muốn đổi lấy</p>
-        {wants.length ? (
-          <div className="flex flex-wrap gap-1.5">{wants.map((w) => <Badge key={w} tone="accent">{w}</Badge>)}</div>
+        {wants.length + wantedItems.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {wantedItems.map((w) => (
+              <Link key={w.id} href={`/mon/${w.id}`} className="inline-flex max-w-full items-center rounded-full bg-accent-soft px-2.5 py-0.5 text-xs font-semibold text-accent-ink underline-offset-2 hover:underline">
+                <span className="truncate">Đúng món: {w.title}</span>
+              </Link>
+            ))}
+            {wants.map((w) => <Badge key={w} tone="accent">{w}</Badge>)}
+          </div>
         ) : (
           <p className="text-sm text-ink-2">Sẵn sàng xem mọi đề nghị.</p>
         )}
