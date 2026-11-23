@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dữ liệu local: ảnh tải lên ở chế độ STORAGE_DRIVER=local, ảnh minh họa của seed
+/.data/
+# mẫu cấu hình được commit; các file .env khác thì không
+!.env.example
+# kết quả e2e
+/test-results/
+/playwright-report/
