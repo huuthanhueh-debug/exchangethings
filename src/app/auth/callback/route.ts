@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import type { NextRequest } from 'next/server';
 import { supabaseServer } from '@/server/auth/supabase';
 import { env } from '@/server/env';
-import { safeNextPath } from '@/server/session';
+import { safeNextPath } from '@/lib/safe-path';
 
 // Google trả về đây kèm ?code=...; đổi code lấy phiên đăng nhập rồi quay về trang cũ.
 export async function GET(request: NextRequest) {

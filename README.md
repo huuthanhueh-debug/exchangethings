@@ -43,7 +43,7 @@ pnpm dev                       # mở http://localhost:3000, đăng nhập bằn
 
 | Lệnh | Việc |
 |---|---|
-| `pnpm test` | 205 test: phân quyền RLS, đăng món, bộ lọc từ khóa, chống lách sau rà soát độc lập, seed chạy lại cho cùng kết quả, lớp service trên database thật, unit test. Tự dựng database `exchangethings_test` |
+| `pnpm test` | 225 test: phân quyền RLS, đăng món, bộ lọc từ khóa, chống lách sau rà soát độc lập, công cụ cài database, seed chạy lại cho cùng kết quả, lớp service trên database thật, unit test. Tự dựng database `exchangethings_test` |
 | `pnpm test:unit` | Chỉ unit test, không cần Postgres |
 | `pnpm typecheck` | Kiểm tra kiểu TypeScript |
 | `pnpm lint` | ESLint (gồm quy tắc accessibility và React Compiler) |
@@ -77,15 +77,27 @@ tests/                 test database (db/), unit (unit/), file sinh tự động
 - Kết nối database ở xa luôn mã hóa TLS và kiểm tra chứng chỉ (kèm sẵn CA gốc của Supabase).
 - Không có khóa bí mật trong code; header bảo mật cơ bản trên mọi trang.
 
-## Đưa lên online (việc của chủ dự án, trước M2)
+## Đưa lên online (không cần token Supabase, không cần dòng lệnh)
 
-1. Tạo project Supabase, nên chọn vùng Singapore cho độ trễ thấp ở Việt Nam.
-2. Chạy lần lượt các file trong `supabase/migrations` (Supabase CLI: `supabase db push`). Không chạy `tests/db/shim.sql` trên Supabase: file này chỉ giả lập phần Supabase có sẵn để test local. Không chạy `supabase/seed.sql` trên môi trường thật.
-3. Authentication:
-   - Site URL: địa chỉ app. Redirect URLs: `{APP_URL}/auth/confirm**` và `{APP_URL}/auth/callback**`.
-   - Mẫu email "Magic Link": link trỏ tới `{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email`.
-   - Bật Google: tạo OAuth client trong Google Cloud, dán Client ID và Secret vào Supabase.
-4. Đặt biến môi trường trên Vercel theo `.env.example`, với `AUTH_MODE=supabase`, `STORAGE_DRIVER=supabase` và `DATABASE_URL` là chuỗi pooler chế độ transaction.
-5. Kiểm tra quyền chuyển vai trò của user database (lớp dữ liệu cần): chạy `select pg_has_role(current_user, 'authenticated', 'member'), pg_has_role(current_user, 'service_role', 'member');` trong SQL Editor, cả hai phải là `true`. Bước này chưa kiểm chứng được trên Supabase thật trong M1; sẽ kiểm ngay đầu M2.
+1. **Supabase**: tạo project mới, vùng Singapore, tự đặt mật khẩu database.
+2. **Cài database**, chọn một trong hai kênh:
+   - **Kênh A, dán một lần**: mở [supabase/setup.sql](supabase/setup.sql) trên GitHub, bấm *Copy raw file*. Vào Supabase > SQL Editor > New query, dán, bấm **Run**. Bảng kết quả bên dưới phải toàn `true`. Dán lần hai sẽ bị từ chối, không ghi đè.
+   - **Kênh B, tự động**: GitHub > Settings > Secrets and variables > Actions > *New repository secret*, tên `DATABASE_URL`, giá trị là chuỗi **Transaction pooler** (nút Connect trên Supabase, đã điền mật khẩu). Rồi tab Actions > **Database** > Run workflow > `migrate`.
+3. **Đăng nhập email**: Supabase > Authentication > URL Configuration. *Site URL* là địa chỉ app; *Redirect URLs* thêm `{APP_URL}/auth/confirm**` và `{APP_URL}/auth/callback**`. Không cần sửa mẫu email.
+4. **Vercel**: import repo, đặt biến môi trường theo `.env.example` với `AUTH_MODE=supabase`, `STORAGE_DRIVER=supabase`, `DATABASE_URL` (chuỗi Transaction pooler), ba khóa của Supabase và `APP_URL`.
+5. **Kiểm tra**: Actions > Database > Run workflow > `check`. Mọi dòng phải có dấu ✓.
 
-Khóa bí mật nhập vào cài đặt của Vercel và Supabase, không dán vào chat hay commit vào repo.
+Khi có migration mới: chạy lại workflow với `migrate`. Không chạy `tests/db/shim.sql` hay `supabase/seed.sql` trên Supabase: hai file này chỉ dành cho máy dev.
+
+Khóa bí mật chỉ nhập vào trang cài đặt của GitHub, Vercel và Supabase; không dán vào chat, không commit vào repo.
+
+### Lệnh database
+
+| Lệnh | Việc |
+|---|---|
+| `pnpm db:migrate` | Chạy migration còn thiếu trên database của `DATABASE_URL`. Có sổ ghi, chạy lại không sao; `--dry-run` để chỉ xem |
+| `pnpm db:doctor` | Kiểm tra đúng những thứ app cần: phân quyền, chuyển vai trò, dữ liệu gốc, bộ lọc, kho ảnh. Chỉ đọc |
+| `pnpm db:setup-sql` | Sinh lại `supabase/setup.sql` sau khi thêm migration |
+| `pnpm db:reset` | Chỉ máy dev: xóa và dựng lại database local kèm dữ liệu mẫu |
+
+Chưa kiểm chứng trên Supabase thật (mới chạy trên Postgres local có cùng vai trò và mặc định): chứng chỉ TLS của pooler, quyền tạo trigger trên `auth.users`, và giới hạn độ dài của SQL Editor với file 188 KB. Nếu SQL Editor từ chối vì file dài, dùng kênh B.

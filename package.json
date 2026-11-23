@@ -11,6 +11,9 @@
     "test": "vitest run",
     "test:unit": "SKIP_DB_TESTS=1 vitest run tests/unit tests/data",
     "db:reset": "node scripts/db-reset.mjs",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:doctor": "node scripts/db-doctor.mjs",
+    "db:setup-sql": "node scripts/build-setup-sql.mjs",
     "db:seed:generate": "node scripts/generate-seed.mjs",
     "db:seed:media": "node scripts/generate-seed-media.mjs",
     "db:admin-units:generate": "node scripts/generate-admin-units-sql.mjs"

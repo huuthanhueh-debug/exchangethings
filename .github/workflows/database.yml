@@ -1,0 +1,41 @@
+# Kênh cài và kiểm tra database không cần token Supabase, không cần máy dev.
+# Chuẩn bị một lần: Settings > Secrets and variables > Actions > New repository secret, tên DATABASE_URL,
+# giá trị là chuỗi kết nối "Transaction pooler" của Supabase (đã điền mật khẩu database).
+# Chạy: tab Actions > Database > Run workflow > chọn "check" hoặc "migrate".
+name: Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'check = chỉ kiểm tra. migrate = chạy migration còn thiếu rồi kiểm tra.'
+        type: choice
+        options: [check, migrate]
+        default: check
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Chạy migration còn thiếu
+        if: inputs.action == 'migrate'
+        run: pnpm db:migrate
+      - name: Kiểm tra database
+        run: pnpm db:doctor

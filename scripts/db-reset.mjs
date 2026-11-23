@@ -4,10 +4,11 @@
 // An toàn: chỉ chạy với Postgres ở localhost; script này XÓA database đích, không bao giờ trỏ vào Supabase.
 // tests/db/shim.sql giả lập phần Supabase có sẵn (auth.users, auth.uid(), vai trò anon/authenticated/service_role);
 // trên Supabase thật chỉ chạy các file trong supabase/migrations.
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pg from 'pg';
+import { loadMigrations, migrate } from './lib/db-tools.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -29,12 +30,7 @@ export async function resetDatabase({ dbName = 'exchangethings_test', seed = tru
   const db = new pg.Client({ connectionString: url.toString() });
   await db.connect();
   try {
-    const files = [join(root, 'tests/db/shim.sql')];
-    const migDir = join(root, 'supabase/migrations');
-    for (const f of readdirSync(migDir).filter((f) => f.endsWith('.sql')).sort()) files.push(join(migDir, f));
-    const seedFile = join(root, 'supabase/seed.sql');
-    if (seed && existsSync(seedFile)) files.push(seedFile);
-    for (const f of files) {
+    const run = async (f) => {
       try {
         await db.query(readFileSync(f, 'utf8'));
       } catch (e) {
@@ -42,7 +38,12 @@ export async function resetDatabase({ dbName = 'exchangethings_test', seed = tru
         throw e;
       }
       log('applied', f.replace(root + '/', ''));
-    }
+    };
+    await run(join(root, 'tests/db/shim.sql'));
+    // Cùng bộ chạy migration với bản online (pnpm db:migrate), nên database local cũng có sổ migration.
+    await migrate(db, loadMigrations(), { log: (m) => log(m) });
+    const seedFile = join(root, 'supabase/seed.sql');
+    if (seed && existsSync(seedFile)) await run(seedFile);
   } finally {
     await db.end();
   }
