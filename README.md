@@ -10,7 +10,7 @@ Tài liệu gốc: [PLAN.md](PLAN.md) (các mốc), [SPEC.md](SPEC.md) (đặc t
 |---|---|---|
 | M0 | Kế hoạch, đặc tả, wireframe | Đã duyệt 22/11/2026 |
 | M1 | Nền móng: database, phân quyền, đăng nhập, hồ sơ, đăng món 6 loại, ảnh xóa EXIF | **Đã duyệt 22/11/2026** |
-| M2 | Quẹt, khớp, chat | Chưa làm |
+| M2 | Quẹt, khớp, chat có che số điện thoại và số tài khoản | **Xong 23/11/2026, chờ duyệt** |
 | M3 đến M6 | Đề nghị, giao dịch, đánh giá, admin, ra mắt | Chưa làm |
 
 ### M1 gồm
@@ -23,7 +23,15 @@ Tài liệu gốc: [PLAN.md](PLAN.md) (các mốc), [SPEC.md](SPEC.md) (đặc t
 - **Ảnh**: xoay đúng chiều, xóa toàn bộ EXIF và vị trí GPS, lưu WebP 1600px kèm bản 480px; ảnh chứng từ chỉ chủ món và admin xem.
 - **Kiểm duyệt**: từ khóa cấm chặn đăng, từ khóa cần xem lại và loại "Khác" chờ admin duyệt.
 
-Chưa có trong M1 (theo PLAN): quẹt và khớp (M2), đề nghị và cán cân (M3), giao dịch, ký quỹ, két số (M4), giao diện admin, xác minh số điện thoại bằng OTP.
+### M2 gồm
+
+- **Quẹt** (`/quet`): chồng thẻ xếp theo điểm gợi ý của SPEC mục 8 (mong muốn hai chiều, cán cân giá trị, khoảng cách, uy tín). Ba cách thao tác tương đương: kéo thẻ, bấm nút, phím mũi tên trái/phải. Bộ lọc nằm trên URL: loại, danh mục, giá trị, tỉnh/thành, "chỉ món hợp với đồ tôi có". Khách chưa đăng nhập xem thử 8 thẻ mới nhất, không có thông tin người đăng.
+- **Khớp**: A thích một món của B và B thích một món bất kỳ của A thì khớp, hiện "Khớp rồi!" và mở chat. Trang món có nút Quan tâm; đã khớp thì thành nút Nhắn tin.
+- **Chat** (`/khop`): danh sách khớp kèm tin cuối và số tin chưa đọc; tin mới tự tới sau khoảng 3 giây; chấm báo trên thanh điều hướng.
+- **Che thông tin liên lạc**: số điện thoại, số tài khoản, liên kết, email bị che trước khi lưu, cho tới khi giao dịch giữa hai người được khóa. Số tiền không bị che.
+- **Chống lạm dụng**: tối đa 300 lượt quẹt và 200 tin nhắn trong 24 giờ (đổi được trong `platform_settings`); chặn nhau thì ẩn hai chiều.
+
+Chưa có (theo PLAN): đề nghị và cán cân (M3), giao dịch, ký quỹ, két số (M4), đánh giá, báo cáo, nút chặn, giao diện admin (M5), xác minh số điện thoại bằng OTP. Chat chưa gửi được ảnh và chưa xem được quá 200 tin gần nhất.
 
 ## Chạy trên máy
 
@@ -43,26 +51,29 @@ pnpm dev                       # mở http://localhost:3000, đăng nhập bằn
 
 | Lệnh | Việc |
 |---|---|
-| `pnpm test` | 225 test: phân quyền RLS, đăng món, bộ lọc từ khóa, chống lách sau rà soát độc lập, công cụ cài database, seed chạy lại cho cùng kết quả, lớp service trên database thật, unit test. Tự dựng database `exchangethings_test` |
+| `pnpm test` | 324 test: phân quyền RLS, đăng món, bộ lọc từ khóa, luật khớp, che thông tin liên lạc, điểm gợi ý, công cụ cài database, seed chạy lại cho cùng kết quả, lớp server trên database thật. Tự dựng database `exchangethings_test` |
 | `pnpm test:unit` | Chỉ unit test, không cần Postgres |
+| `pnpm test:e2e` | Kiểm thử đầu cuối bằng Playwright trên bản production, màn di động và màn 1440px: hai người thích nhau thì khớp, chat, che liên lạc, bộ lọc, khách xem thử. Tự dựng database `exchangethings_e2e`; lần đầu chạy `pnpm exec playwright install chromium` |
 | `pnpm typecheck` | Kiểm tra kiểu TypeScript |
 | `pnpm lint` | ESLint (gồm quy tắc accessibility và React Compiler) |
 | `pnpm build` | Build production; không cần biến môi trường |
 
-CI (GitHub Actions) chạy đủ 4 bước trên với Postgres 16 ở mỗi lần push và pull request.
+CI (GitHub Actions) chạy `lint`, `typecheck`, `test`, `build` và `test:e2e` với Postgres 16 ở mỗi lần push và pull request.
 
 ## Cấu trúc
 
 ```
 supabase/migrations/   schema, RLS, dữ liệu tham chiếu, địa giới hành chính (file cuối sinh từ script)
+supabase/setup.sql     cài database cho project mới; supabase/upgrade.sql cập nhật project đã cài (hai file sinh tự động)
 supabase/seed.sql      dữ liệu mẫu (sinh từ scripts/generate-seed.mjs, không sửa tay)
 data/admin-units/      dữ liệu gốc 34 tỉnh/thành, 3.321 phường/xã kèm nguồn
 scripts/               dựng lại database, sinh seed, sinh ảnh minh họa, sinh migration địa giới
-src/server/            chỉ chạy ở server: kết nối database theo vai trò, phiên đăng nhập, ảnh, lưu tệp, nghiệp vụ món
-src/lib/               dùng chung: định dạng VND, số điện thoại, IMEI, 6 loại món, validation
-src/app/               trang và Server Action (đường dẫn tiếng Việt: /dang-mon, /mon-cua-toi, /ho-so)
+src/server/            chỉ chạy ở server: kết nối database theo vai trò, phiên đăng nhập, ảnh, lưu tệp, nghiệp vụ món,
+                       chồng thẻ, khớp, chat
+src/lib/               dùng chung: định dạng VND, số điện thoại, IMEI, 6 loại món, validation, điểm gợi ý, bộ lọc
+src/app/               trang và Server Action (đường dẫn tiếng Việt: /quet, /khop, /dang-mon, /mon-cua-toi, /ho-so)
 src/proxy.ts           làm mới phiên Supabase, chuyển hướng trang cần đăng nhập
-tests/                 test database (db/), unit (unit/), file sinh tự động (data/)
+tests/                 test database (db/), unit (unit/), file sinh tự động (data/), đầu cuối (e2e/)
 ```
 
 ## Kiến trúc và bảo mật
@@ -75,6 +86,7 @@ tests/                 test database (db/), unit (unit/), file sinh tự động
 - Đã qua một lượt rà soát độc lập trước khi lên mạng, vá cả 8 phát hiện (D-27). Hồ sơ chỉ lộ cột công khai (D-28).
 - Việc còn lại trước khi mở cho khách được liệt kê ở D-29: tài khoản database quyền tối thiểu, tắt Data API, giới hạn tần suất.
 - Kết nối database ở xa luôn mã hóa TLS và kiểm tra chứng chỉ (kèm sẵn CA gốc của Supabase).
+- Lượt quẹt, match, tin nhắn chỉ ghi qua hàm của database, nên giới hạn tần suất, luật khớp và việc che liên lạc đúng cả khi ai đó gọi thẳng API của Supabase (D-34). Tin nhắn chỉ lưu bản đã che (D-33).
 - Không có khóa bí mật trong code; header bảo mật cơ bản trên mọi trang.
 
 ## Đưa lên online (không cần token Supabase, không cần dòng lệnh)
@@ -87,7 +99,14 @@ tests/                 test database (db/), unit (unit/), file sinh tự động
 4. **Vercel**: import repo, đặt biến môi trường theo `.env.example` với `AUTH_MODE=supabase`, `STORAGE_DRIVER=supabase`, `DATABASE_URL` (chuỗi Transaction pooler), ba khóa của Supabase và `APP_URL`.
 5. **Kiểm tra**: Actions > Database > Run workflow > `check`. Mọi dòng phải có dấu ✓.
 
-Khi có migration mới: chạy lại workflow với `migrate`. Không chạy `tests/db/shim.sql` hay `supabase/seed.sql` trên Supabase: hai file này chỉ dành cho máy dev.
+### Cập nhật project đã cài khi có bản mới
+
+Bản M2 thêm một migration. Project đã cài bản M1 thì cập nhật bằng một trong hai kênh, cũng không cần token:
+
+- **Kênh A, dán một lần**: mở [supabase/upgrade.sql](supabase/upgrade.sql) trên GitHub, bấm *Copy raw file*, dán vào Supabase > SQL Editor rồi bấm **Run**. File chỉ chạy các migration còn thiếu; bảng kết quả phải toàn `true`. Dán lại lần nữa không sao. Nếu bản đã cài khác bản trong repo, file dừng lại và không đổi gì.
+- **Kênh B, tự động**: Actions > **Database** > Run workflow > `migrate` (cần secret `DATABASE_URL` như ở bước 2).
+
+Project mới thì chỉ cần `supabase/setup.sql`: file này đã gồm sẵn mọi migration. Không chạy `tests/db/shim.sql` hay `supabase/seed.sql` trên Supabase: hai file này chỉ dành cho máy dev.
 
 Khóa bí mật chỉ nhập vào trang cài đặt của GitHub, Vercel và Supabase; không dán vào chat, không commit vào repo.
 
@@ -97,7 +116,7 @@ Khóa bí mật chỉ nhập vào trang cài đặt của GitHub, Vercel và Sup
 |---|---|
 | `pnpm db:migrate` | Chạy migration còn thiếu trên database của `DATABASE_URL`. Có sổ ghi, chạy lại không sao; `--dry-run` để chỉ xem |
 | `pnpm db:doctor` | Kiểm tra đúng những thứ app cần: phân quyền, chuyển vai trò, dữ liệu gốc, bộ lọc, kho ảnh. Chỉ đọc |
-| `pnpm db:setup-sql` | Sinh lại `supabase/setup.sql` sau khi thêm migration |
+| `pnpm db:setup-sql` | Sinh lại `supabase/setup.sql` và `supabase/upgrade.sql` sau khi thêm migration |
 | `pnpm db:reset` | Chỉ máy dev: xóa và dựng lại database local kèm dữ liệu mẫu |
 
-Chưa kiểm chứng trên Supabase thật (mới chạy trên Postgres local có cùng vai trò và mặc định): chứng chỉ TLS của pooler, quyền tạo trigger trên `auth.users`, và giới hạn độ dài của SQL Editor với file 188 KB. Nếu SQL Editor từ chối vì file dài, dùng kênh B.
+Chưa kiểm chứng trên Supabase thật (mới chạy trên Postgres local có cùng vai trò và mặc định): chứng chỉ TLS của pooler, quyền tạo trigger trên `auth.users`, và giới hạn độ dài của SQL Editor với file khoảng 210 KB. Nếu SQL Editor từ chối vì file dài, dùng kênh B.

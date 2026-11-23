@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { dbTestsEnabled } from './helpers';
-import { ROOT, buildSetupSql, doctor, formatReport, loadMigrations, migrate } from '../../scripts/lib/db-tools.mjs';
+import { BASELINE_VERSION, ROOT, buildSetupSql, buildUpgradeSql, doctor, formatReport, loadMigrations, migrate } from '../../scripts/lib/db-tools.mjs';
 
 // Kênh cài database không cần token Supabase: bộ chạy migration, lệnh khám, file setup.sql.
 // Mỗi test dùng một database tạm có cùng vai trò và mặc định như Supabase (tests/db/shim.sql).
@@ -183,6 +183,75 @@ d('cài database không cần token Supabase', () => {
     await expect(c.query(sql)).rejects.toThrow(/đã có bảng của Exchangethings\.vn/);
     await c.query('rollback');
     expect(await ledger(c)).toHaveLength(migrations.length);
+  });
+
+  describe('upgrade.sql: cập nhật project đã cài bản M1 bằng cách dán vào SQL Editor', () => {
+    const m1 = migrations.filter((m) => m.version <= BASELINE_VERSION);
+    const later = migrations.filter((m) => m.version > BASELINE_VERSION);
+    const upgrade = buildUpgradeSql(migrations);
+    const resultTable = (r: unknown) => (r as pg.QueryResult[]).at(-1)!.rows as { 'Kiểm tra': string; 'Đạt': boolean }[];
+
+    it('bản M1 có 4 migration; các bản sau có ít nhất một file để cập nhật', () => {
+      expect(m1.map((m) => m.version)).toEqual(['20261122000100', '20261122000200', '20261122000300', '20261122000310']);
+      expect(later.length).toBeGreaterThanOrEqual(1);
+      // Phần thân của bản M1 không nằm trong file cập nhật: file nhỏ, dán nhanh.
+      expect(upgrade).not.toContain('create table public.profiles');
+      expect(Buffer.byteLength(upgrade)).toBeLessThan(Buffer.byteLength(buildSetupSql(migrations)) / 3);
+    });
+    it('database đang ở bản M1: dán một lần là lên bản mới nhất, bảng kết quả toàn true, khám đạt', async () => {
+      const { c } = await scratch();
+      await migrate(c, m1);
+      expect(await ledger(c)).toEqual(m1.map((m) => m.version));
+      const table = resultTable(await c.query(upgrade));
+      expect(table.length).toBeGreaterThanOrEqual(4);
+      expect(table.filter((row) => row['Đạt'] !== true)).toEqual([]);
+      expect(await ledger(c)).toEqual(migrations.map((m) => m.version));
+      expect(failed(await doctor(c, migrations, { loopback: true }))).toEqual([]);
+      // Sổ khớp với bộ chạy dòng lệnh: pnpm db:migrate không còn gì để chạy và không coi file nào là bị sửa.
+      expect((await migrate(c, migrations)).ran).toEqual([]);
+    });
+    it('dán lần hai, hoặc dán vào database đã mới nhất: không làm gì, không lỗi', async () => {
+      const { c } = await scratch();
+      await migrate(c, migrations);
+      const before = (await c.query('select version, applied_at from app_meta.migrations order by 1')).rows;
+      for (let k = 0; k < 2; k++) expect(resultTable(await c.query(upgrade)).every((row) => row['Đạt'])).toBe(true);
+      expect((await c.query('select version, applied_at from app_meta.migrations order by 1')).rows).toEqual(before);
+    });
+    it('database chưa cài gì: báo dùng setup.sql, không tạo gì', async () => {
+      const { c } = await scratch();
+      await expect(c.query(upgrade)).rejects.toThrow(/chưa cài Exchangethings\.vn/);
+      await c.query('rollback');
+      expect((await c.query(`select to_regnamespace('app_meta') is null as none, to_regclass('public.match_reads') is null as no_m2`)).rows[0])
+        .toEqual({ none: true, no_m2: true });
+    });
+    it('bản đã cài khác bản M1 trong repo (thiếu file hoặc nội dung khác): dừng, không đổi gì', async () => {
+      const { c } = await scratch();
+      await migrate(c, m1);
+      await c.query(`update app_meta.migrations set checksum = 'khac' where version = '20261122000200'`);
+      await expect(c.query(upgrade)).rejects.toThrow(/không khớp bản M1: 20261122000200_rls\.sql \(nội dung khác bản trong repo\)/);
+      await c.query('rollback');
+      await c.query(`delete from app_meta.migrations where version = '20261122000310'`);
+      await expect(c.query(upgrade)).rejects.toThrow(/20261122000200_rls\.sql \(nội dung khác bản trong repo\), 20261122000310_admin_units\.sql \(chưa chạy\)/);
+      await c.query('rollback');
+      expect((await c.query(`select to_regclass('public.match_reads') is null as no_m2`)).rows[0].no_m2).toBe(true);
+    });
+    it('migration mới lỗi giữa chừng: cả lượt cập nhật được hoàn lại', async () => {
+      const { c } = await scratch();
+      await migrate(c, m1);
+      await c.query('create table public.match_reads (id int)'); // làm migration M2 vấp ở giữa
+      await expect(c.query(upgrade)).rejects.toThrow(/match_reads.*already exists/);
+      await c.query('rollback');
+      expect(await ledger(c)).toEqual(m1.map((m) => m.version));
+      expect((await c.query(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'swipes'`)).rows[0].n).toBe(0);
+      expect((await c.query(`select to_regprocedure('public.swipe_item(uuid, public.swipe_direction)') is null as none`)).rows[0].none).toBe(true);
+    });
+    it('migration đã chạy nhưng nội dung khác bản trong repo: dừng', async () => {
+      const { c } = await scratch();
+      await migrate(c, migrations);
+      await c.query(`update app_meta.migrations set checksum = 'khac' where version = $1`, [later[0].version]);
+      await expect(c.query(upgrade)).rejects.toThrow(/đã chạy với nội dung khác bản trong repo/);
+      await c.query('rollback');
+    });
   });
 
   it('setup.sql trên database không phải Supabase: báo rõ, không tạo gì', async () => {

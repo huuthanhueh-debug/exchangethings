@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
 import { SlidersHorizontalIcon } from '@phosphor-icons/react/ssr';
-import { Notice, Skeleton, buttonClass, cx, inputClass } from '@/components/ui';
+import { Skeleton, buttonClass, cx, inputClass } from '@/components/ui';
 import { VALUE_RANGES, countDeckFilters, deckFiltersToParams, parseDeckFilters, type DeckFilters } from '@/lib/deck-filters';
 import { ITEM_TYPES, ITEM_TYPE_META, todayInVietnam } from '@/lib/items';
 import { getCatalog, type Catalog } from '@/server/catalog';
@@ -43,10 +43,10 @@ async function Deck({ searchParams }: { searchParams: PageProps<'/quet'>['search
     const loginHref = `/dang-nhap?next=${encodeURIComponent(canonical)}`;
     return (
       <div className="space-y-4">
-        <Notice tone="accent" title="Bạn đang xem thử">
-          Đăng nhập để quan tâm món, khớp với người đăng và thấy món hợp với đồ bạn có.{' '}
-          <Link href={loginHref} className="font-semibold underline underline-offset-2">Đăng nhập</Link>
-        </Notice>
+        <p className="rounded-2xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm text-accent-ink" role="status">
+          <span className="font-semibold">Bạn đang xem thử.</span>{' '}
+          <Link href={loginHref} className="font-semibold underline underline-offset-2">Đăng nhập</Link> để khớp.
+        </p>
         <FilterBar key={`f-${query}`} filters={filters} catalog={catalog} />
         <SwipeDeck key={`guest:${query}`} initial={cards.map((c) => toCardView(c, catalog, today))} filterParams={params} pageSize={GUEST_DECK_SIZE} guestLoginHref={loginHref} />
       </div>
@@ -59,10 +59,10 @@ async function Deck({ searchParams }: { searchParams: PageProps<'/quet'>['search
       {/* key theo bộ lọc: ô chọn là uncontrolled, phải dựng lại khi bộ lọc đổi để không giữ giá trị cũ. */}
       <FilterBar key={`f-${query}`} filters={filters} catalog={catalog} />
       {deck.myActiveItems === 0 && (
-        <Notice tone="accent" title="Bạn chưa có món nào đang hiển thị">
-          Người khác chỉ khớp được với bạn khi họ thích một món của bạn.{' '}
+        <p className="rounded-2xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm text-accent-ink" role="status">
+          <span className="font-semibold">Bạn chưa có món nào đang hiển thị</span> nên chưa ai khớp được với bạn.{' '}
           <Link href="/dang-mon" className="font-semibold underline underline-offset-2">Đăng món</Link>
-        </Notice>
+        </p>
       )}
       {/* key theo người xem và bộ lọc: đăng nhập, đổi tài khoản hoặc đổi bộ lọc thì chồng thẻ dựng lại từ đầu,
           không giữ thẻ của phiên trước. */}
@@ -137,7 +137,7 @@ function DeckSkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Đang tải chồng thẻ">
       <Skeleton className="h-11" />
-      <Skeleton className="h-[min(58dvh,34rem)] min-h-[22rem]" />
+      <Skeleton className="h-[min(56dvh,34rem)] min-h-[22rem]" />
       <div className="flex justify-center gap-6">
         <Skeleton className="size-16 rounded-full" />
         <Skeleton className="size-16 rounded-full" />

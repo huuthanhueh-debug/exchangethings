@@ -228,7 +228,7 @@ export function SwipeDeck({ initial, filterParams, pageSize, guestLoginHref }: {
 
       {top ? (
         <>
-          <div className="relative h-[min(58dvh,34rem)] min-h-[22rem] select-none" aria-label="Chồng thẻ món">
+          <div className={cx('relative min-h-[22rem] select-none', guest ? 'h-[min(50dvh,32rem)]' : 'h-[min(56dvh,34rem)]')} aria-label="Chồng thẻ món">
             {next && <CardShell key={next.id} card={next} behind />}
             <CardShell
               key={top.id}
@@ -269,7 +269,7 @@ export function SwipeDeck({ initial, filterParams, pageSize, guestLoginHref }: {
       ) : exhausted ? (
         <EmptyDeck filtered={Object.keys(filterParams).length > 0} />
       ) : (
-        <div className="h-[min(58dvh,34rem)] min-h-[22rem] animate-pulse rounded-2xl bg-surface-2" role="status" aria-label="Đang tìm thêm món" />
+        <div className="h-[min(56dvh,34rem)] min-h-[22rem] animate-pulse rounded-2xl bg-surface-2" role="status" aria-label="Đang tìm thêm món" />
       )}
 
       {toast && (
@@ -405,7 +405,7 @@ function CardShell({ card, behind, ref, photoIndex = 0, onPhoto, likeStamp, pass
           ) : (
             <>
               {/* Chỉ là hình mờ trang trí: tên và điểm uy tín thật không được gửi tới trình duyệt của khách. */}
-              <span className="select-none blur-[5px]" aria-hidden>Thành viên · 00 điểm</span>
+              <span className="shrink-0 select-none whitespace-nowrap blur-[4px]" aria-hidden>Thành viên</span>
               <span className="truncate text-muted">Đăng nhập để xem người đăng</span>
             </>
           )}

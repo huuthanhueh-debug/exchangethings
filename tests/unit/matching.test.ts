@@ -82,11 +82,11 @@ describe('wants_fit', () => {
   it('mong muốn của người xem gộp từ mọi món của họ; mong muốn của người đăng chỉ tính trên món đang xét', () => {
     const viewer: Viewer = {
       provinceCode: '79',
-      items: [item('v-book', 'Sách cũ', 100_000, { wants: [{ kind: 'category', categoryId: 'phones' }] }), item('v-laptop', 'MacBook Air M2', 15_000_000)],
+      items: [item('v-laptop', 'MacBook Air M2', 15_000_000), item('v-book', 'Sách cũ', 100_000, { wants: [{ kind: 'category', categoryId: 'phones' }] })],
     };
     const phoneWantsLaptop = candidate(item('c', 'Samsung S24', 14_000_000, { categoryId: 'phones', wants: [{ kind: 'keyword', keyword: 'macbook air' }] }));
     const r = scoreCandidate(phoneWantsLaptop, viewer, regionOf);
-    expect(r.iWant).toBe('category'); // ghi trên cuốn sách, vẫn tính cho người xem
+    expect(r.iWant).toBe('category'); // ghi trên cuốn sách (món thứ hai), vẫn tính cho người xem
     expect(r.theyWant).toBe('keyword');
     expect(r.pairedItemId).toBe('v-laptop');
     expect(r.parts.wantsFit).toBeCloseTo((0.7 + 0.4) / 2, 10);

@@ -108,7 +108,7 @@ d('chat', () => {
       ['bàn 028 3822 1234', 'bàn [đã ẩn số điện thoại]'],
       ['zalo0905123456', 'zalo[đã ẩn số điện thoại]'],
       ['０９０５１２３４５６', '[đã ẩn số điện thoại]'], // số fullwidth
-      ['09' + '​' + '05123456', '[đã ẩn số điện thoại]'], // ký tự vô hình chen giữa
+      ['09' + '\u200b' + '05123456', '[đã ẩn số điện thoại]'], // ký tự vô hình chen giữa
       // Số tài khoản, số thẻ, IMEI
       ['stk 19035551234567 techcombank', 'stk [đã ẩn dãy số] techcombank'],
       ['vcb 0011004123456', 'vcb [đã ẩn dãy số]'],

@@ -229,6 +229,16 @@ d('lớp server M2: chồng thẻ, khớp, chat', () => {
       expect(await matches.countAttentionMatches(USERS.dung)).toBe(1);
       expect((await matches.listMatches(USERS.dung))[0]).toMatchObject({ unread: 1, last: { body: 'Anh ơi?', mine: false } });
     });
+    it('số chưa đọc và chấm báo chỉ tính tin của người kia, không tính tin của chính mình', async () => {
+      // Lùi mốc đã đọc của Chi về trước cả ba tin: chỉ 1 tin của Dũng là chưa đọc, 2 tin của Chi không tính.
+      await admin.query(`update match_reads set last_read_at = '2026-11-20T03:00:00Z' where user_id = $1`, [USERS.chi]);
+      expect((await matches.listMatches(USERS.chi))[0].unread).toBe(1);
+      expect(await matches.countAttentionMatches(USERS.chi)).toBe(1);
+      // Mốc nằm sau tin của Dũng, trước tin cuối của Chi: không còn gì chưa đọc.
+      await admin.query(`update match_reads set last_read_at = '2026-11-20T03:10:00Z' where user_id = $1`, [USERS.chi]);
+      expect((await matches.listMatches(USERS.chi))[0].unread).toBe(0);
+      expect(await matches.countAttentionMatches(USERS.chi)).toBe(0);
+    });
     it('chặn nhau thì match ẩn ở cả hai phía và không gửi tin được', async () => {
       await admin.query('insert into blocks (blocker_id, blocked_id) values ($1, $2)', [USERS.chi, USERS.dung]);
       expect(await matches.listMatches(USERS.chi)).toEqual([]);

@@ -4530,7 +4530,7 @@ begin
     return null;
   end if;
   v_norm := regexp_replace(normalize(p_text, NFKC),
-    '[­͏؜ᅟᅠ឴឵᠋-᠎​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ]', '', 'g');
+    '[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0]', '', 'g');
   v_out := v_norm;
   -- Email.
   v_out := regexp_replace(v_out, '[[:alnum:]._%+-]+@[[:alnum:]-]+(\.[[:alnum:]-]+)+', '[đã ẩn email]', 'g');
@@ -4796,7 +4796,7 @@ begin
   end if;
 end $$;
 
-insert into app_meta.migrations (version, name, checksum) values ('20261123000100', 'm2_swipe_match_chat', '907d79aa764acf5031d7e73830e51dff66811487c8acddec52f54e53df159df3');
+insert into app_meta.migrations (version, name, checksum) values ('20261123000100', 'm2_swipe_match_chat', '527b77ef6df6762b05f5f851d22e5da6e9d3301f63abf6a8752f236870ed3be1');
 
 commit;
 
